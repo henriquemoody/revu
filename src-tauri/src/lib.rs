@@ -35,6 +35,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_status,
             get_file_diff,
+            get_file_content,
             get_combined_diff,
             get_branch_log,
             get_commit_log,

@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
-import type { CommitInfo, FileEntry, FileDiff, RepositoryStatus, ReviewMode } from "@/types/git";
+import type { CommitInfo, DiffHunk, DiffLine, FileEntry, FileDiff, RepositoryStatus, ReviewMode } from "@/types/git";
+import { computeHunkGap } from "@/features/diff/diffUtils";
 
 interface DemoState {
   status: RepositoryStatus;
@@ -22,6 +23,7 @@ interface GitState {
   commitsPage: number; // current page in paginated mode
   selectedCommit: CommitInfo | null;
   commitFiles: FileEntry[];
+  _fileContentCache: string[] | null;
 
   setRepoPath: (path: string) => Promise<void>;
   refreshStatus: () => Promise<void>;
@@ -44,6 +46,7 @@ interface GitState {
   loadMoreCommits: () => Promise<void>;
   selectCommit: (commit: CommitInfo | null) => Promise<void>;
   _fetchDiff: (file: FileEntry, fullContext: boolean, ignoreWhitespace: boolean) => Promise<void>;
+  expandHunkContext: (hunkIndex: number, direction: "up" | "down", count?: number) => Promise<void>;
   // Demo mode - accepts pre-built demo state
   initDemoMode: (demoState: DemoState) => void;
 }
@@ -63,6 +66,7 @@ export const useGitStore = create<GitState>()((set, get) => ({
   commitsPage: 0,
   selectedCommit: null,
   commitFiles: [],
+  _fileContentCache: null,
 
   initDemoMode: (demoState: DemoState) => {
     const { status, diffs } = demoState;
@@ -117,7 +121,7 @@ export const useGitStore = create<GitState>()((set, get) => ({
     const { repoPath, isDemo, _demoState } = get();
     if (!repoPath) return;
 
-    set({ selectedFile: file, currentDiff: null });
+    set({ selectedFile: file, currentDiff: null, _fileContentCache: null });
 
     if (file) {
       if (isDemo && _demoState) {
@@ -133,10 +137,11 @@ export const useGitStore = create<GitState>()((set, get) => ({
     if (!repoPath || !selectedFile) return;
 
     if (isDemo && _demoState) {
-      set({ currentDiff: _demoState.diffs[selectedFile.path] || null });
+      set({ currentDiff: _demoState.diffs[selectedFile.path] || null, _fileContentCache: null });
       return;
     }
 
+    set({ _fileContentCache: null });
     await get()._fetchDiff(selectedFile, fullContext, ignoreWhitespace);
   },
 
@@ -167,6 +172,122 @@ export const useGitStore = create<GitState>()((set, get) => ({
     } catch (e) {
       set({ error: String(e) });
     }
+  },
+
+  expandHunkContext: async (hunkIndex: number, direction: "up" | "down", count = 20) => {
+    const { repoPath, currentDiff, selectedFile, reviewMode, selectedCommit, _fileContentCache } = get();
+    if (!repoPath || !currentDiff || !selectedFile) return;
+
+    // Determine source for file content
+    let source: string;
+    if (reviewMode === "commits" && selectedCommit) {
+      source = selectedCommit.oid;
+    } else if (selectedFile.staged) {
+      source = "index";
+    } else {
+      source = "workdir";
+    }
+
+    // Fetch file content if not cached
+    let fileLines = _fileContentCache;
+    if (!fileLines) {
+      try {
+        fileLines = await invoke<string[]>("get_file_content", {
+          repoPath,
+          filePath: currentDiff.path,
+          source,
+        });
+        set({ _fileContentCache: fileLines });
+      } catch {
+        return;
+      }
+    }
+
+    // Deep clone hunks
+    const hunks: DiffHunk[] = currentDiff.hunks.map((h) => ({
+      ...h,
+      lines: [...h.lines],
+    }));
+
+    const hunk = hunks[hunkIndex];
+
+    // Compute gap above this hunk
+    const { gapNewTop, gapOldTop, gapNewBottom, gapSize } = computeHunkGap(hunks, hunkIndex);
+
+    if (gapSize <= 0) return;
+
+    if (direction === "down") {
+      // Prepend context lines to this hunk from bottom of gap
+      const actual = Math.min(count, gapSize);
+      const startNew = gapNewBottom - actual + 1;
+      const startOld = hunk.oldStart - actual;
+
+      const newLines: DiffLine[] = [];
+      for (let i = 0; i < actual; i++) {
+        const newLineNo = startNew + i;
+        const oldLineNo = startOld + i;
+        newLines.push({
+          lineType: "context",
+          content: (fileLines[newLineNo - 1] ?? "") + "\n",
+          oldLineNo,
+          newLineNo,
+        });
+      }
+
+      hunk.lines = [...newLines, ...hunk.lines];
+      hunk.oldStart -= actual;
+      hunk.oldLines += actual;
+      hunk.newStart -= actual;
+      hunk.newLines += actual;
+      // Note: any trailing function context git appends (e.g. "@@ ... @@ function foo()") is
+      // intentionally omitted — we regenerate the header from line numbers alone after expansion.
+      hunk.header = `@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`;
+    } else {
+      // Append context lines to previous hunk from top of gap
+      if (hunkIndex === 0) return;
+
+      const prevHunk = hunks[hunkIndex - 1];
+      const actual = Math.min(count, gapSize);
+      const startNew = gapNewTop;
+      const startOld = gapOldTop;
+
+      const newLines: DiffLine[] = [];
+      for (let i = 0; i < actual; i++) {
+        const newLineNo = startNew + i;
+        const oldLineNo = startOld + i;
+        newLines.push({
+          lineType: "context",
+          content: (fileLines[newLineNo - 1] ?? "") + "\n",
+          oldLineNo,
+          newLineNo,
+        });
+      }
+
+      prevHunk.lines = [...prevHunk.lines, ...newLines];
+      prevHunk.oldLines += actual;
+      prevHunk.newLines += actual;
+      prevHunk.header = `@@ -${prevHunk.oldStart},${prevHunk.oldLines} +${prevHunk.newStart},${prevHunk.newLines} @@`;
+    }
+
+    // Merge adjacent/overlapping hunks
+    for (let i = hunks.length - 1; i > 0; i--) {
+      const prev = hunks[i - 1];
+      const curr = hunks[i];
+      if (prev.newStart + prev.newLines >= curr.newStart) {
+        // Remove overlapping context lines from curr
+        const overlap = (prev.newStart + prev.newLines) - curr.newStart;
+        if (overlap > 0) {
+          curr.lines = curr.lines.slice(overlap);
+        }
+        prev.lines = [...prev.lines, ...curr.lines];
+        prev.oldLines = (curr.oldStart + curr.oldLines) - prev.oldStart;
+        prev.newLines = (curr.newStart + curr.newLines) - prev.newStart;
+        prev.header = `@@ -${prev.oldStart},${prev.oldLines} +${prev.newStart},${prev.newLines} @@`;
+        hunks.splice(i, 1);
+      }
+    }
+
+    set({ currentDiff: { ...currentDiff, hunks } });
   },
 
   stageFile: async (filePath: string) => {
@@ -335,7 +456,7 @@ export const useGitStore = create<GitState>()((set, get) => ({
     const { repoPath } = get();
     if (!repoPath) return;
 
-    set({ selectedCommit: commit, selectedFile: null, currentDiff: null, commitFiles: [] });
+    set({ selectedCommit: commit, selectedFile: null, currentDiff: null, commitFiles: [], _fileContentCache: null });
 
     if (commit) {
       try {

@@ -20,3 +20,13 @@ pub fn get_combined_diff(repo_path: String) -> Result<Vec<FileDiff>, AppError> {
     let repo = GitRepository::open(&repo_path)?;
     repo.get_combined_diff()
 }
+
+#[tauri::command]
+pub fn get_file_content(
+    repo_path: String,
+    file_path: String,
+    source: String,
+) -> Result<Vec<String>, AppError> {
+    let repo = GitRepository::open(&repo_path)?;
+    repo.get_file_content(&file_path, &source)
+}

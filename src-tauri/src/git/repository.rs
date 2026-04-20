@@ -648,6 +648,42 @@ impl GitRepository {
         Ok(oid.to_string())
     }
 
+    pub fn get_file_content(&self, file_path: &str, source: &str) -> Result<Vec<String>, AppError> {
+        let content = match source {
+            "workdir" => {
+                let workdir = self
+                    .repo
+                    .workdir()
+                    .ok_or_else(|| AppError::Custom("No working directory".to_string()))?;
+                let full_path = workdir.join(file_path);
+                std::fs::read_to_string(&full_path)
+                    .map_err(|e| AppError::Custom(format!("Failed to read file: {}", e)))?
+            }
+            "index" => {
+                let index = self.repo.index()?;
+                let entry = index
+                    .get_path(Path::new(file_path), 0)
+                    .ok_or_else(|| AppError::Custom("File not found in index".to_string()))?;
+                let blob = self.repo.find_blob(entry.id)?;
+                String::from_utf8_lossy(blob.content()).to_string()
+            }
+            oid => {
+                let oid = git2::Oid::from_str(oid)
+                    .map_err(|e| AppError::Custom(format!("Invalid OID: {e}")))?;
+                let commit = self.repo.find_commit(oid)?;
+                let tree = commit.tree()?;
+                let entry = tree.get_path(Path::new(file_path))?;
+                let object = entry.to_object(&self.repo)?;
+                let blob = object
+                    .as_blob()
+                    .ok_or_else(|| AppError::Custom("Not a blob".to_string()))?;
+                String::from_utf8_lossy(blob.content()).to_string()
+            }
+        };
+
+        Ok(content.lines().map(|l| l.to_string()).collect())
+    }
+
     pub fn discard_file(&self, file_path: &str) -> Result<(), AppError> {
         let workdir = self
             .repo

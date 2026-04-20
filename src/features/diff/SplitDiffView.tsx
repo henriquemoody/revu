@@ -8,6 +8,8 @@ import type { ScrollToLine } from "@/stores/uiStore";
 import { computeWordDiff, mergeSegments } from "@/lib/wordDiff";
 import { getLanguageFromPath } from "@/lib/syntax";
 import { HighlightedContent } from "./HighlightedContent";
+import { HunkExpandControls } from "./HunkExpandControls";
+import { computeHunkGap } from "./diffUtils";
 
 interface SplitDiffViewProps {
   diff: FileDiff;
@@ -20,6 +22,7 @@ interface SplitDiffViewProps {
   ) => void;
   onContentClick: (comment: Comment) => void;
   onLineHover: (lineNo: number | null) => void;
+  onExpand: (hunkIndex: number, direction: "up" | "down") => void;
   rangeSelectionStart?: number | null;
   rangeSelectionIsOld?: boolean | null;
   hoveredLine?: number | null;
@@ -32,6 +35,9 @@ interface SplitLine {
   right: DiffLineType | null;
   isHunkHeader: boolean;
   hunkHeader?: string;
+  hunkIndex?: number;
+  canExpandUp?: boolean;
+  canExpandDown?: boolean;
   leftDiffSegments?: DiffSegment[];
   rightDiffSegments?: DiffSegment[];
 }
@@ -42,6 +48,7 @@ export function SplitDiffView({
   onLineClick,
   onContentClick,
   onLineHover,
+  onExpand,
   rangeSelectionStart,
   rangeSelectionIsOld,
   hoveredLine,
@@ -83,12 +90,17 @@ export function SplitDiffView({
   const splitLines = useMemo(() => {
     const result: SplitLine[] = [];
 
-    for (const hunk of diff.hunks) {
+    diff.hunks.forEach((hunk, hunkIndex) => {
+      const { gapSize } = computeHunkGap(diff.hunks, hunkIndex);
+
       result.push({
         left: null,
         right: null,
         isHunkHeader: true,
         hunkHeader: hunk.header,
+        hunkIndex,
+        canExpandUp: hunkIndex > 0 && gapSize > 0,
+        canExpandDown: gapSize > 0,
       });
 
       const deletions: DiffLineType[] = [];
@@ -141,7 +153,7 @@ export function SplitDiffView({
       }
 
       flushQueues();
-    }
+    });
 
     return result;
   }, [diff.hunks]);
@@ -263,9 +275,15 @@ export function SplitDiffView({
                       height: `${virtualRow.size}px`,
                       transform: `translateY(${virtualRow.start}px)`,
                     }}
-                    className="bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 font-mono text-sm px-4 py-0.5 border-y border-blue-200 dark:border-blue-800"
+                    className="bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 font-mono text-sm px-4 py-0.5 border-y border-blue-200 dark:border-blue-800 flex items-center gap-1"
                   >
-                    {row.hunkHeader}
+                    <HunkExpandControls
+                      hunkIndex={row.hunkIndex!}
+                      canExpandUp={row.canExpandUp ?? false}
+                      canExpandDown={row.canExpandDown ?? false}
+                      onExpand={onExpand}
+                    />
+                    <span>{row.hunkHeader}</span>
                   </div>
                 );
               }

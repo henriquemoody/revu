@@ -7,6 +7,8 @@ import type { ScrollToLine } from "@/stores/uiStore";
 import { computeWordDiff, mergeSegments } from "@/lib/wordDiff";
 import { getLanguageFromPath } from "@/lib/syntax";
 import { DiffLine } from "./DiffLine";
+import { HunkExpandControls } from "./HunkExpandControls";
+import { computeHunkGap } from "./diffUtils";
 
 interface UnifiedDiffViewProps {
   diff: FileDiff;
@@ -19,6 +21,7 @@ interface UnifiedDiffViewProps {
   ) => void;
   onContentClick: (comment: Comment) => void;
   onLineHover: (lineNo: number | null) => void;
+  onExpand: (hunkIndex: number, direction: "up" | "down") => void;
   rangeSelectionStart?: number | null;
   rangeSelectionIsOld?: boolean | null;
   hoveredLine?: number | null;
@@ -33,6 +36,8 @@ interface FlatLine {
   hunkIndex?: number;
   lineIndex?: number;
   diffSegments?: DiffSegment[];
+  canExpandUp?: boolean;
+  canExpandDown?: boolean;
 }
 
 export function UnifiedDiffView({
@@ -41,6 +46,7 @@ export function UnifiedDiffView({
   onLineClick,
   onContentClick,
   onLineHover,
+  onExpand,
   rangeSelectionStart,
   rangeSelectionIsOld,
   hoveredLine,
@@ -71,10 +77,14 @@ export function UnifiedDiffView({
     const lines: FlatLine[] = [];
 
     diff.hunks.forEach((hunk, hunkIndex) => {
+      const { gapSize } = computeHunkGap(diff.hunks, hunkIndex);
+
       lines.push({
         type: "hunk-header",
         content: hunk.header,
         hunkIndex,
+        canExpandUp: hunkIndex > 0 && gapSize > 0,
+        canExpandDown: gapSize > 0,
       });
 
       // First pass: collect lines
@@ -185,9 +195,15 @@ export function UnifiedDiffView({
                   height: `${virtualRow.size}px`,
                   transform: `translateY(${virtualRow.start}px)`,
                 }}
-                className="bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 font-mono text-sm px-4 py-0.5 border-y border-blue-200 dark:border-blue-800"
+                className="bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 font-mono text-sm px-4 py-0.5 border-y border-blue-200 dark:border-blue-800 flex items-center gap-1"
               >
-                {item.content}
+                <HunkExpandControls
+                  hunkIndex={item.hunkIndex!}
+                  canExpandUp={item.canExpandUp ?? false}
+                  canExpandDown={item.canExpandDown ?? false}
+                  onExpand={onExpand}
+                />
+                <span>{item.content}</span>
               </div>
             );
           }

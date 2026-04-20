@@ -7,7 +7,7 @@ import { SplitDiffView } from "./SplitDiffView";
 import type { Comment } from "@/types/comment";
 
 export function DiffViewer() {
-  const { currentDiff, selectedFile, fetchDiff } = useGitStore();
+  const { currentDiff, selectedFile, fetchDiff, expandHunkContext } = useGitStore();
   const { getFileComments, setDraft } = useCommentStore();
   const {
     diffViewMode,
@@ -235,6 +235,7 @@ export function DiffViewer() {
             onLineClick={handleLineClick}
             onContentClick={handleContentClick}
             onLineHover={handleLineHover}
+            onExpand={expandHunkContext}
             rangeSelectionStart={rangeStart?.lineNo ?? null}
             rangeSelectionIsOld={rangeStart?.isOld ?? null}
             hoveredLine={rangeStart ? hoveredLine : null}
@@ -248,6 +249,7 @@ export function DiffViewer() {
             onLineClick={handleLineClick}
             onContentClick={handleContentClick}
             onLineHover={handleLineHover}
+            onExpand={expandHunkContext}
             rangeSelectionStart={rangeStart?.lineNo ?? null}
             rangeSelectionIsOld={rangeStart?.isOld ?? null}
             hoveredLine={rangeStart ? hoveredLine : null}
