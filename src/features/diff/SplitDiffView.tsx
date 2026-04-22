@@ -8,8 +8,8 @@ import type { ScrollToLine } from "@/stores/uiStore";
 import { computeWordDiff, mergeSegments } from "@/lib/wordDiff";
 import { getLanguageFromPath } from "@/lib/syntax";
 import { HighlightedContent } from "./HighlightedContent";
-import { HunkExpandControls } from "./HunkExpandControls";
-import { computeHunkGap } from "./diffUtils";
+import { HunkExpandControls, ExpandDownButton } from "./HunkExpandControls";
+import { computeHunkGap, canExpandTail } from "./diffUtils";
 
 interface SplitDiffViewProps {
   diff: FileDiff;
@@ -22,7 +22,8 @@ interface SplitDiffViewProps {
   ) => void;
   onContentClick: (comment: Comment) => void;
   onLineHover: (lineNo: number | null) => void;
-  onExpand: (hunkIndex: number, direction: "up" | "down") => void;
+  onExpand: (hunkIndex: number, direction: "up" | "down" | "tail") => void;
+  fileTotalLines: number | null;
   rangeSelectionStart?: number | null;
   rangeSelectionIsOld?: boolean | null;
   hoveredLine?: number | null;
@@ -34,6 +35,7 @@ interface SplitLine {
   left: DiffLineType | null;
   right: DiffLineType | null;
   isHunkHeader: boolean;
+  isTailExpand?: boolean;
   hunkHeader?: string;
   hunkIndex?: number;
   canExpandUp?: boolean;
@@ -49,6 +51,7 @@ export function SplitDiffView({
   onContentClick,
   onLineHover,
   onExpand,
+  fileTotalLines,
   rangeSelectionStart,
   rangeSelectionIsOld,
   hoveredLine,
@@ -155,8 +158,19 @@ export function SplitDiffView({
       flushQueues();
     });
 
+    // Add tail expand row when there might be lines below the last hunk
+    if (canExpandTail(diff.hunks, fileTotalLines)) {
+      result.push({
+        left: null,
+        right: null,
+        isHunkHeader: false,
+        isTailExpand: true,
+        hunkIndex: diff.hunks.length - 1,
+      });
+    }
+
     return result;
-  }, [diff.hunks]);
+  }, [diff.hunks, fileTotalLines]);
 
   // Virtualizer attached to RIGHT pane (primary scroll - has visible scrollbar)
   const virtualizer = useVirtualizer({
@@ -288,6 +302,26 @@ export function SplitDiffView({
                 );
               }
 
+              if (row.isTailExpand) {
+                const hunkIdx = row.hunkIndex ?? (diff.hunks.length - 1);
+                return (
+                  <div
+                    key={`left-${virtualRow.key}`}
+                    style={{
+                      position: "absolute",
+                      top: 0,
+                      left: 0,
+                      width: "100%",
+                      height: `${virtualRow.size}px`,
+                      transform: `translateY(${virtualRow.start}px)`,
+                    }}
+                    className="bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 font-mono text-sm px-4 py-0.5 border-y border-blue-200 dark:border-blue-800 flex items-center"
+                  >
+                    <ExpandDownButton onClick={() => onExpand(hunkIdx, "tail")} />
+                  </div>
+                );
+              }
+
               return (
                 <div
                   key={`left-${virtualRow.key}`}
@@ -366,6 +400,23 @@ export function SplitDiffView({
                 >
                   {row.hunkHeader}
                 </div>
+              );
+            }
+
+            if (row.isTailExpand) {
+              return (
+                <div
+                  key={`right-${virtualRow.key}`}
+                  style={{
+                    position: "absolute",
+                    top: 0,
+                    left: 0,
+                    width: "100%",
+                    height: `${virtualRow.size}px`,
+                    transform: `translateY(${virtualRow.start}px)`,
+                  }}
+                  className="bg-blue-50 dark:bg-blue-900/20 border-y border-blue-200 dark:border-blue-800"
+                />
               );
             }
 

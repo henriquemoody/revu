@@ -24,6 +24,7 @@ interface GitState {
   selectedCommit: CommitInfo | null;
   commitFiles: FileEntry[];
   _fileContentCache: string[] | null;
+  fileTotalLines: number | null;
 
   setRepoPath: (path: string) => Promise<void>;
   refreshStatus: () => Promise<void>;
@@ -46,7 +47,7 @@ interface GitState {
   loadMoreCommits: () => Promise<void>;
   selectCommit: (commit: CommitInfo | null) => Promise<void>;
   _fetchDiff: (file: FileEntry, fullContext: boolean, ignoreWhitespace: boolean) => Promise<void>;
-  expandHunkContext: (hunkIndex: number, direction: "up" | "down", count?: number) => Promise<void>;
+  expandHunkContext: (hunkIndex: number, direction: "up" | "down" | "tail", count?: number) => Promise<void>;
   // Demo mode - accepts pre-built demo state
   initDemoMode: (demoState: DemoState) => void;
 }
@@ -67,6 +68,7 @@ export const useGitStore = create<GitState>()((set, get) => ({
   selectedCommit: null,
   commitFiles: [],
   _fileContentCache: null,
+  fileTotalLines: null,
 
   initDemoMode: (demoState: DemoState) => {
     const { status, diffs } = demoState;
@@ -121,7 +123,7 @@ export const useGitStore = create<GitState>()((set, get) => ({
     const { repoPath, isDemo, _demoState } = get();
     if (!repoPath) return;
 
-    set({ selectedFile: file, currentDiff: null, _fileContentCache: null });
+    set({ selectedFile: file, currentDiff: null, _fileContentCache: null, fileTotalLines: null });
 
     if (file) {
       if (isDemo && _demoState) {
@@ -137,11 +139,11 @@ export const useGitStore = create<GitState>()((set, get) => ({
     if (!repoPath || !selectedFile) return;
 
     if (isDemo && _demoState) {
-      set({ currentDiff: _demoState.diffs[selectedFile.path] || null, _fileContentCache: null });
+      set({ currentDiff: _demoState.diffs[selectedFile.path] || null, _fileContentCache: null, fileTotalLines: null });
       return;
     }
 
-    set({ _fileContentCache: null });
+    set({ _fileContentCache: null, fileTotalLines: null });
     await get()._fetchDiff(selectedFile, fullContext, ignoreWhitespace);
   },
 
@@ -174,7 +176,7 @@ export const useGitStore = create<GitState>()((set, get) => ({
     }
   },
 
-  expandHunkContext: async (hunkIndex: number, direction: "up" | "down", count = 20) => {
+  expandHunkContext: async (hunkIndex: number, direction: "up" | "down" | "tail", count = 20) => {
     const { repoPath, currentDiff, selectedFile, reviewMode, selectedCommit, _fileContentCache } = get();
     if (!repoPath || !currentDiff || !selectedFile) return;
 
@@ -197,7 +199,7 @@ export const useGitStore = create<GitState>()((set, get) => ({
           filePath: currentDiff.path,
           source,
         });
-        set({ _fileContentCache: fileLines });
+        set({ _fileContentCache: fileLines, fileTotalLines: fileLines.length });
       } catch {
         return;
       }
@@ -208,6 +210,33 @@ export const useGitStore = create<GitState>()((set, get) => ({
       ...h,
       lines: [...h.lines],
     }));
+
+    if (direction === "tail") {
+      // Append context lines after the last hunk
+      const lastHunk = hunks[hunkIndex];
+      const tailStart = lastHunk.newStart + lastHunk.newLines;
+      const tailStartOld = lastHunk.oldStart + lastHunk.oldLines;
+      const tailGapSize = fileLines.length - tailStart + 1;
+      if (tailGapSize <= 0) return;
+
+      const actual = Math.min(count, tailGapSize);
+      const newLines: DiffLine[] = [];
+      for (let i = 0; i < actual; i++) {
+        newLines.push({
+          lineType: "context",
+          content: (fileLines[tailStart - 1 + i] ?? "") + "\n",
+          oldLineNo: tailStartOld + i,
+          newLineNo: tailStart + i,
+        });
+      }
+      lastHunk.lines = [...lastHunk.lines, ...newLines];
+      lastHunk.oldLines += actual;
+      lastHunk.newLines += actual;
+      lastHunk.header = `@@ -${lastHunk.oldStart},${lastHunk.oldLines} +${lastHunk.newStart},${lastHunk.newLines} @@`;
+
+      set({ currentDiff: { ...currentDiff, hunks } });
+      return;
+    }
 
     const hunk = hunks[hunkIndex];
 
@@ -456,7 +485,7 @@ export const useGitStore = create<GitState>()((set, get) => ({
     const { repoPath } = get();
     if (!repoPath) return;
 
-    set({ selectedCommit: commit, selectedFile: null, currentDiff: null, commitFiles: [], _fileContentCache: null });
+    set({ selectedCommit: commit, selectedFile: null, currentDiff: null, commitFiles: [], _fileContentCache: null, fileTotalLines: null });
 
     if (commit) {
       try {

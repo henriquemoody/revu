@@ -7,8 +7,8 @@ import type { ScrollToLine } from "@/stores/uiStore";
 import { computeWordDiff, mergeSegments } from "@/lib/wordDiff";
 import { getLanguageFromPath } from "@/lib/syntax";
 import { DiffLine } from "./DiffLine";
-import { HunkExpandControls } from "./HunkExpandControls";
-import { computeHunkGap } from "./diffUtils";
+import { HunkExpandControls, ExpandDownButton } from "./HunkExpandControls";
+import { computeHunkGap, canExpandTail } from "./diffUtils";
 
 interface UnifiedDiffViewProps {
   diff: FileDiff;
@@ -21,7 +21,8 @@ interface UnifiedDiffViewProps {
   ) => void;
   onContentClick: (comment: Comment) => void;
   onLineHover: (lineNo: number | null) => void;
-  onExpand: (hunkIndex: number, direction: "up" | "down") => void;
+  onExpand: (hunkIndex: number, direction: "up" | "down" | "tail") => void;
+  fileTotalLines: number | null;
   rangeSelectionStart?: number | null;
   rangeSelectionIsOld?: boolean | null;
   hoveredLine?: number | null;
@@ -30,7 +31,7 @@ interface UnifiedDiffViewProps {
 }
 
 interface FlatLine {
-  type: "hunk-header" | "line";
+  type: "hunk-header" | "line" | "tail-expand";
   content: string;
   line?: FileDiff["hunks"][0]["lines"][0];
   hunkIndex?: number;
@@ -47,6 +48,7 @@ export function UnifiedDiffView({
   onContentClick,
   onLineHover,
   onExpand,
+  fileTotalLines,
   rangeSelectionStart,
   rangeSelectionIsOld,
   hoveredLine,
@@ -118,8 +120,17 @@ export function UnifiedDiffView({
       lines.push(...hunkLines);
     });
 
+    // Add tail expand row when there might be lines below the last hunk
+    if (canExpandTail(diff.hunks, fileTotalLines)) {
+      lines.push({
+        type: "tail-expand",
+        content: "",
+        hunkIndex: diff.hunks.length - 1,
+      });
+    }
+
     return lines;
-  }, [diff.hunks]);
+  }, [diff.hunks, fileTotalLines]);
 
   const virtualizer = useVirtualizer({
     count: flatLines.length,
@@ -204,6 +215,26 @@ export function UnifiedDiffView({
                   onExpand={onExpand}
                 />
                 <span>{item.content}</span>
+              </div>
+            );
+          }
+
+          if (item.type === "tail-expand") {
+            const hunkIdx = item.hunkIndex ?? (diff.hunks.length - 1);
+            return (
+              <div
+                key={virtualRow.key}
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  width: "100%",
+                  height: `${virtualRow.size}px`,
+                  transform: `translateY(${virtualRow.start}px)`,
+                }}
+                className="bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 font-mono text-sm px-4 py-0.5 border-y border-blue-200 dark:border-blue-800 flex items-center"
+              >
+                <ExpandDownButton onClick={() => onExpand(hunkIdx, "tail")} />
               </div>
             );
           }

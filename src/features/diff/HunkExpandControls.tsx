@@ -2,7 +2,21 @@ interface HunkExpandControlsProps {
   hunkIndex: number;
   canExpandUp: boolean;
   canExpandDown: boolean;
-  onExpand: (hunkIndex: number, direction: "up" | "down") => void;
+  onExpand: (hunkIndex: number, direction: "up" | "down" | "tail") => void;
+}
+
+export function ExpandDownButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className="p-0.5 rounded hover:bg-blue-200 dark:hover:bg-blue-800 transition-colors"
+      title="Expand down"
+    >
+      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
+      </svg>
+    </button>
+  );
 }
 
 export function HunkExpandControls({ hunkIndex, canExpandUp, canExpandDown, onExpand }: HunkExpandControlsProps) {
@@ -27,15 +41,7 @@ export function HunkExpandControls({ hunkIndex, canExpandUp, canExpandDown, onEx
         </button>
       )}
       {canExpandDown && !showUpForFirstHunk && (
-        <button
-          onClick={() => onExpand(hunkIndex, "down")}
-          className="p-0.5 rounded hover:bg-blue-200 dark:hover:bg-blue-800 transition-colors"
-          title="Expand down"
-        >
-          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
-          </svg>
-        </button>
+        <ExpandDownButton onClick={() => onExpand(hunkIndex, "down")} />
       )}
     </span>
   );

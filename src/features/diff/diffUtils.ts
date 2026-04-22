@@ -1,5 +1,15 @@
 import type { DiffHunk } from "@/types/git";
 
+export function canExpandTail(
+  hunks: DiffHunk[],
+  fileTotalLines: number | null,
+): boolean {
+  if (hunks.length === 0) return false;
+  const lastHunk = hunks[hunks.length - 1];
+  const tailStart = lastHunk.newStart + lastHunk.newLines;
+  return fileTotalLines === null || tailStart <= fileTotalLines;
+}
+
 export function computeHunkGap(
   hunks: DiffHunk[],
   hunkIndex: number,
