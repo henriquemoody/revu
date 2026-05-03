@@ -72,7 +72,7 @@ export function CommitList() {
   }
 
   return (
-    <div>
+    <div className={selectedCommit ? "max-h-[335px] overflow-y-auto" : undefined}>
       {commits.map((commit) => (
         <CommitItem
           key={commit.oid}
