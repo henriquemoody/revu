@@ -1,4 +1,5 @@
 import { clsx } from "clsx";
+import { useRef } from "react";
 import { useGitStore } from "@/stores/gitStore";
 import type { CommitInfo } from "@/types/git";
 
@@ -20,14 +21,14 @@ function CommitItem({
 }: {
   commit: CommitInfo;
   isSelected: boolean;
-  onSelect: (multi: boolean) => void;
+  onSelect: (multi: boolean, shift: boolean) => void;
 }) {
   const firstLine = commit.message.split("\n")[0].trim();
   const shortOid = commit.oid.slice(0, 7);
 
   return (
     <button
-      onClick={(e) => onSelect(e.metaKey || e.ctrlKey)}
+      onClick={(e) => onSelect(e.metaKey || e.ctrlKey, e.shiftKey)}
       className={clsx(
         "w-full text-left px-3 py-2 border-b border-gray-100 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800 cursor-default",
         isSelected && "bg-blue-50 dark:bg-blue-900/30",
@@ -52,8 +53,9 @@ function CommitItem({
 }
 
 export function CommitList() {
-  const { commits, selectedCommits, selectCommit, toggleCommitSelection, isLoading, commitsPaginated, loadMoreCommits } =
+  const { commits, selectedCommits, selectCommit, selectCommits, toggleCommitSelection, isLoading, commitsPaginated, loadMoreCommits } =
     useGitStore();
+  const anchorIndexRef = useRef<number | null>(null);
 
   if (isLoading) {
     return (
@@ -75,16 +77,22 @@ export function CommitList() {
 
   return (
     <div className={selectedCommits.length > 0 ? "max-h-[335px] overflow-y-auto" : undefined}>
-      {commits.map((commit) => (
+      {commits.map((commit, index) => (
         <CommitItem
           key={commit.oid}
           commit={commit}
           isSelected={selectedOids.has(commit.oid)}
-          onSelect={(multi) => {
-            if (multi) {
+          onSelect={(multi, shift) => {
+            if (shift && anchorIndexRef.current !== null) {
+              const start = Math.min(anchorIndexRef.current, index);
+              const end = Math.max(anchorIndexRef.current, index);
+              selectCommits(commits.slice(start, end + 1));
+            } else if (multi) {
               toggleCommitSelection(commit);
+              anchorIndexRef.current = index;
             } else {
               selectCommit(commit);
+              anchorIndexRef.current = index;
             }
           }}
         />

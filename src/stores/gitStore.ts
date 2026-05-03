@@ -46,6 +46,7 @@ interface GitState {
   fetchCommitLog: () => Promise<void>;
   loadMoreCommits: () => Promise<void>;
   selectCommit: (commit: CommitInfo | null) => Promise<void>;
+  selectCommits: (commits: CommitInfo[]) => Promise<void>;
   toggleCommitSelection: (commit: CommitInfo) => Promise<void>;
   _fetchCommitFiles: (commits: CommitInfo[]) => Promise<void>;
   _fetchDiff: (file: FileEntry, fullContext: boolean, ignoreWhitespace: boolean) => Promise<void>;
@@ -525,6 +526,14 @@ export const useGitStore = create<GitState>()((set, get) => ({
     const selectedCommits = commit ? [commit] : [];
     set({ selectedCommits, selectedFile: null, currentDiff: null, commitFiles: [], _fileContentCache: null, fileTotalLines: null });
     await get()._fetchCommitFiles(selectedCommits);
+  },
+
+  selectCommits: async (commits: CommitInfo[]) => {
+    const { repoPath } = get();
+    if (!repoPath) return;
+
+    set({ selectedCommits: commits, selectedFile: null, currentDiff: null, commitFiles: [], _fileContentCache: null, fileTotalLines: null });
+    await get()._fetchCommitFiles(commits);
   },
 
   toggleCommitSelection: async (commit: CommitInfo) => {
