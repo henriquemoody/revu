@@ -3,6 +3,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
 import { useGitStore } from "@/stores/gitStore";
 import { useCommentStore } from "@/stores/commentStore";
+import { buildCommitRef } from "@/lib/commitRef";
 import { useUiStore } from "@/stores/uiStore";
 import { ThemeProvider, ThemeToggle } from "@/features/theme";
 import { FileList } from "@/features/files";
@@ -22,7 +23,7 @@ export default function App() {
     isDemo,
     reviewMode,
     setReviewMode,
-    selectedCommit,
+    selectedCommits,
   } = useGitStore();
   const {
     draft,
@@ -83,14 +84,14 @@ export default function App() {
     }
   }, [repoPath, setCommentRepoPath, isDemo]);
 
-  // Sync comment store's review context when mode or selected commit changes
+  // Sync comment store's review context when mode or selected commit(s) change
   useEffect(() => {
-    if (reviewMode === "commits" && selectedCommit) {
-      setReviewContext(selectedCommit.oid);
+    if (reviewMode === "commits") {
+      setReviewContext(buildCommitRef(selectedCommits) ?? "working");
     } else {
       setReviewContext("working");
     }
-  }, [reviewMode, selectedCommit, setReviewContext]);
+  }, [reviewMode, selectedCommits, setReviewContext]);
 
   // Listen for CLI-provided repo path from backend
   useEffect(() => {
@@ -108,7 +109,7 @@ export default function App() {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "c" && e.shiftKey) {
         e.preventDefault();
-        const markdown = exportToMarkdown(selectedCommit?.oid);
+        const markdown = exportToMarkdown(buildCommitRef(selectedCommits));
         if (markdown) {
           navigator.clipboard.writeText(markdown);
         }
@@ -122,7 +123,7 @@ export default function App() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [exportToMarkdown, refreshStatus, selectedCommit]);
+  }, [exportToMarkdown, refreshStatus, selectedCommits]);
 
   // Auto-open comments panel when first comment is added
   const comments = getAllComments();

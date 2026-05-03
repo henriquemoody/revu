@@ -39,3 +39,31 @@ pub fn get_commit_file_diff(
         ignore_whitespace.unwrap_or(false),
     )
 }
+
+#[tauri::command]
+pub fn get_multi_commit_files(
+    repo_path: String,
+    oids: Vec<String>,
+) -> Result<Vec<FileEntry>, AppError> {
+    let repo = GitRepository::open(&repo_path)?;
+    let oid_refs: Vec<&str> = oids.iter().map(|s| s.as_str()).collect();
+    repo.get_multi_commit_files(&oid_refs)
+}
+
+#[tauri::command]
+pub fn get_multi_commit_file_diff(
+    repo_path: String,
+    oids: Vec<String>,
+    file_path: String,
+    context_lines: Option<u32>,
+    ignore_whitespace: Option<bool>,
+) -> Result<FileDiff, AppError> {
+    let repo = GitRepository::open(&repo_path)?;
+    let oid_refs: Vec<&str> = oids.iter().map(|s| s.as_str()).collect();
+    repo.get_multi_commit_file_diff(
+        &oid_refs,
+        &file_path,
+        context_lines.unwrap_or(3),
+        ignore_whitespace.unwrap_or(false),
+    )
+}

@@ -57,10 +57,10 @@ function CommitFileItem({
 }
 
 export function CommitFileList() {
-  const { commitFiles, selectedFile, selectFile, selectedCommit } = useGitStore();
+  const { commitFiles, selectedFile, selectFile, selectedCommits } = useGitStore();
   const commentCountByFile = useCommentCountByFile();
 
-  if (!selectedCommit) return null;
+  if (selectedCommits.length === 0) return null;
 
   if (commitFiles.length === 0) {
     return (
@@ -70,10 +70,17 @@ export function CommitFileList() {
     );
   }
 
+  const multiCommit = selectedCommits.length > 1;
+
   return (
     <div>
       <div className="px-3 py-1.5 text-xs font-medium text-gray-500 dark:text-gray-400 border-t border-gray-200 dark:border-gray-700">
         {commitFiles.length} file{commitFiles.length !== 1 ? "s" : ""} changed
+        {multiCommit && (
+          <span className="ml-1 text-gray-400 dark:text-gray-500 font-normal">
+            across {selectedCommits.length} commits
+          </span>
+        )}
       </div>
       {commitFiles.map((file) => (
         <CommitFileItem

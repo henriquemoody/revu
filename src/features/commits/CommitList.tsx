@@ -20,14 +20,14 @@ function CommitItem({
 }: {
   commit: CommitInfo;
   isSelected: boolean;
-  onSelect: () => void;
+  onSelect: (multi: boolean) => void;
 }) {
   const firstLine = commit.message.split("\n")[0].trim();
   const shortOid = commit.oid.slice(0, 7);
 
   return (
     <button
-      onClick={onSelect}
+      onClick={(e) => onSelect(e.metaKey || e.ctrlKey)}
       className={clsx(
         "w-full text-left px-3 py-2 border-b border-gray-100 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800 cursor-default",
         isSelected && "bg-blue-50 dark:bg-blue-900/30",
@@ -52,7 +52,7 @@ function CommitItem({
 }
 
 export function CommitList() {
-  const { commits, selectedCommit, selectCommit, isLoading, commitsPaginated, loadMoreCommits } =
+  const { commits, selectedCommits, selectCommit, toggleCommitSelection, isLoading, commitsPaginated, loadMoreCommits } =
     useGitStore();
 
   if (isLoading) {
@@ -71,14 +71,22 @@ export function CommitList() {
     );
   }
 
+  const selectedOids = new Set(selectedCommits.map((c) => c.oid));
+
   return (
-    <div className={selectedCommit ? "max-h-[335px] overflow-y-auto" : undefined}>
+    <div className={selectedCommits.length > 0 ? "max-h-[335px] overflow-y-auto" : undefined}>
       {commits.map((commit) => (
         <CommitItem
           key={commit.oid}
           commit={commit}
-          isSelected={selectedCommit?.oid === commit.oid}
-          onSelect={() => selectCommit(commit)}
+          isSelected={selectedOids.has(commit.oid)}
+          onSelect={(multi) => {
+            if (multi) {
+              toggleCommitSelection(commit);
+            } else {
+              selectCommit(commit);
+            }
+          }}
         />
       ))}
       {commitsPaginated && (

@@ -21,7 +21,7 @@ interface GitState {
   commits: CommitInfo[];
   commitsPaginated: boolean; // true when showing paginated log (not branch-scoped)
   commitsPage: number; // current page in paginated mode
-  selectedCommit: CommitInfo | null;
+  selectedCommits: CommitInfo[];
   commitFiles: FileEntry[];
   _fileContentCache: string[] | null;
   fileTotalLines: number | null;
@@ -46,6 +46,8 @@ interface GitState {
   fetchCommitLog: () => Promise<void>;
   loadMoreCommits: () => Promise<void>;
   selectCommit: (commit: CommitInfo | null) => Promise<void>;
+  toggleCommitSelection: (commit: CommitInfo) => Promise<void>;
+  _fetchCommitFiles: (commits: CommitInfo[]) => Promise<void>;
   _fetchDiff: (file: FileEntry, fullContext: boolean, ignoreWhitespace: boolean) => Promise<void>;
   expandHunkContext: (hunkIndex: number, direction: "up" | "down" | "tail", count?: number) => Promise<void>;
   // Demo mode - accepts pre-built demo state
@@ -65,7 +67,7 @@ export const useGitStore = create<GitState>()((set, get) => ({
   commits: [],
   commitsPaginated: false,
   commitsPage: 0,
-  selectedCommit: null,
+  selectedCommits: [],
   commitFiles: [],
   _fileContentCache: null,
   fileTotalLines: null,
@@ -148,42 +150,54 @@ export const useGitStore = create<GitState>()((set, get) => ({
   },
 
   _fetchDiff: async (file: FileEntry, fullContext: boolean, ignoreWhitespace: boolean) => {
-    const { repoPath, reviewMode, selectedCommit } = get();
+    const { repoPath, reviewMode, selectedCommits } = get();
     if (!repoPath) return;
 
     try {
-      if (reviewMode === "commits" && selectedCommit) {
-        const diff = await invoke<FileDiff>("get_commit_file_diff", {
-          repoPath,
-          oid: selectedCommit.oid,
-          filePath: file.path,
-          contextLines: fullContext ? 999999 : null,
-          ignoreWhitespace: ignoreWhitespace || null,
-        });
-        set({ currentDiff: diff });
+      let diff: FileDiff;
+      if (reviewMode === "commits" && selectedCommits.length > 0) {
+        if (selectedCommits.length === 1) {
+          diff = await invoke<FileDiff>("get_commit_file_diff", {
+            repoPath,
+            oid: selectedCommits[0].oid,
+            filePath: file.path,
+            contextLines: fullContext ? 999999 : null,
+            ignoreWhitespace: ignoreWhitespace || null,
+          });
+        } else {
+          diff = await invoke<FileDiff>("get_multi_commit_file_diff", {
+            repoPath,
+            oids: selectedCommits.map((c) => c.oid),
+            filePath: file.path,
+            contextLines: fullContext ? 999999 : null,
+            ignoreWhitespace: ignoreWhitespace || null,
+          });
+        }
       } else {
-        const diff = await invoke<FileDiff>("get_file_diff", {
+        diff = await invoke<FileDiff>("get_file_diff", {
           repoPath,
           filePath: file.path,
           staged: file.staged,
           contextLines: fullContext ? 999999 : null,
           ignoreWhitespace: ignoreWhitespace || null,
         });
-        set({ currentDiff: diff });
       }
+      set({ currentDiff: diff });
     } catch (e) {
       set({ error: String(e) });
     }
   },
 
   expandHunkContext: async (hunkIndex: number, direction: "up" | "down" | "tail", count = 20) => {
-    const { repoPath, currentDiff, selectedFile, reviewMode, selectedCommit, _fileContentCache } = get();
+    const { repoPath, currentDiff, selectedFile, reviewMode, selectedCommits, _fileContentCache } = get();
     if (!repoPath || !currentDiff || !selectedFile) return;
 
     // Determine source for file content
     let source: string;
-    if (reviewMode === "commits" && selectedCommit) {
-      source = selectedCommit.oid;
+    if (reviewMode === "commits" && selectedCommits.length > 0) {
+      // Use newest commit for file content
+      const sorted = [...selectedCommits].sort((a, b) => a.timestamp - b.timestamp);
+      source = sorted[sorted.length - 1].oid;
     } else if (selectedFile.staged) {
       source = "index";
     } else {
@@ -431,7 +445,7 @@ export const useGitStore = create<GitState>()((set, get) => ({
       selectedFile: null,
       currentDiff: null,
       commits: [],
-      selectedCommit: null,
+      selectedCommits: [],
       commitFiles: [],
       commitsPage: 0,
       commitsPaginated: false,
@@ -481,22 +495,48 @@ export const useGitStore = create<GitState>()((set, get) => ({
     }
   },
 
+  _fetchCommitFiles: async (commits: CommitInfo[]) => {
+    const { repoPath } = get();
+    if (!repoPath || commits.length === 0) return;
+
+    try {
+      let commitFiles: FileEntry[];
+      if (commits.length === 1) {
+        commitFiles = await invoke<FileEntry[]>("get_commit_files", {
+          repoPath,
+          oid: commits[0].oid,
+        });
+      } else {
+        commitFiles = await invoke<FileEntry[]>("get_multi_commit_files", {
+          repoPath,
+          oids: commits.map((c) => c.oid),
+        });
+      }
+      set({ commitFiles });
+    } catch (e) {
+      set({ error: String(e) });
+    }
+  },
+
   selectCommit: async (commit: CommitInfo | null) => {
     const { repoPath } = get();
     if (!repoPath) return;
 
-    set({ selectedCommit: commit, selectedFile: null, currentDiff: null, commitFiles: [], _fileContentCache: null, fileTotalLines: null });
+    const selectedCommits = commit ? [commit] : [];
+    set({ selectedCommits, selectedFile: null, currentDiff: null, commitFiles: [], _fileContentCache: null, fileTotalLines: null });
+    await get()._fetchCommitFiles(selectedCommits);
+  },
 
-    if (commit) {
-      try {
-        const commitFiles = await invoke<FileEntry[]>("get_commit_files", {
-          repoPath,
-          oid: commit.oid,
-        });
-        set({ commitFiles });
-      } catch (e) {
-        set({ error: String(e) });
-      }
-    }
+  toggleCommitSelection: async (commit: CommitInfo) => {
+    const { repoPath, selectedCommits } = get();
+    if (!repoPath) return;
+
+    const isSelected = selectedCommits.some((c) => c.oid === commit.oid);
+    const newSelectedCommits = isSelected
+      ? selectedCommits.filter((c) => c.oid !== commit.oid)
+      : [...selectedCommits, commit];
+
+    set({ selectedCommits: newSelectedCommits, selectedFile: null, currentDiff: null, commitFiles: [], _fileContentCache: null, fileTotalLines: null });
+    await get()._fetchCommitFiles(newSelectedCommits);
   },
 }));

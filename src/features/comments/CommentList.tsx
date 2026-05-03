@@ -9,6 +9,7 @@ import { Button } from "@/components/ui";
 import { HighlightedContent } from "@/features/diff/HighlightedContent";
 import { getLanguageFromPath } from "@/lib/syntax";
 import { stripIndent } from "@/lib/stripIndent";
+import { buildCommitRef } from "@/lib/commitRef";
 import type { Comment, CommentCategory } from "@/types/comment";
 
 const categoryStyles: Record<
@@ -45,7 +46,7 @@ export function CommentList() {
     clearAllComments,
     setDraft,
   } = useCommentStore();
-  const { repoPath, status, selectFile, selectedCommit } = useGitStore();
+  const { repoPath, status, selectFile, selectedCommits } = useGitStore();
   const { setScrollToLine } = useUiStore();
   const comments = getAllComments();
   const [exportStatus, setExportStatus] = useState<
@@ -63,14 +64,14 @@ export function CommentList() {
   };
 
   const handleCopyMarkdown = async () => {
-    const markdown = exportToMarkdown(selectedCommit?.oid);
+    const markdown = exportToMarkdown(buildCommitRef(selectedCommits));
     if (markdown) {
       await navigator.clipboard.writeText(markdown);
     }
   };
 
   const handleExportForAgent = async () => {
-    const markdown = exportToMarkdown(selectedCommit?.oid);
+    const markdown = exportToMarkdown(buildCommitRef(selectedCommits));
     if (!markdown || !repoPath) return;
 
     setExportStatus("exporting");

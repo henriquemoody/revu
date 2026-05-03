@@ -482,22 +482,7 @@ impl GitRepository {
         Ok(commits)
     }
 
-    pub fn get_commit_files(&self, oid: &str) -> Result<Vec<FileEntry>, AppError> {
-        let oid =
-            git2::Oid::from_str(oid).map_err(|e| AppError::Custom(format!("Invalid OID: {e}")))?;
-        let commit = self.repo.find_commit(oid)?;
-        let commit_tree = commit.tree()?;
-
-        let parent_tree = if commit.parent_count() > 0 {
-            Some(commit.parent(0)?.tree()?)
-        } else {
-            None
-        };
-
-        let diff = self
-            .repo
-            .diff_tree_to_tree(parent_tree.as_ref(), Some(&commit_tree), None)?;
-
+    fn collect_file_entries(diff: &git2::Diff<'_>) -> Vec<FileEntry> {
         let mut files = Vec::new();
         for delta in diff.deltas() {
             let status = match delta.status() {
@@ -532,8 +517,26 @@ impl GitRepository {
                 old_path,
             });
         }
+        files
+    }
 
-        Ok(files)
+    pub fn get_commit_files(&self, oid: &str) -> Result<Vec<FileEntry>, AppError> {
+        let oid =
+            git2::Oid::from_str(oid).map_err(|e| AppError::Custom(format!("Invalid OID: {e}")))?;
+        let commit = self.repo.find_commit(oid)?;
+        let commit_tree = commit.tree()?;
+
+        let parent_tree = if commit.parent_count() > 0 {
+            Some(commit.parent(0)?.tree()?)
+        } else {
+            None
+        };
+
+        let diff = self
+            .repo
+            .diff_tree_to_tree(parent_tree.as_ref(), Some(&commit_tree), None)?;
+
+        Ok(Self::collect_file_entries(&diff))
     }
 
     pub fn get_commit_file_diff(
@@ -564,6 +567,92 @@ impl GitRepository {
         let diff = self.repo.diff_tree_to_tree(
             parent_tree.as_ref(),
             Some(&commit_tree),
+            Some(&mut diff_opts),
+        )?;
+
+        self.parse_diff(&diff, file_path)
+    }
+
+    // Computes the cumulative diff range for a set of selected commits. Sorts by author
+    // timestamp and returns (parent_of_oldest, tree_of_newest). Any commits between the
+    // oldest and newest that were not selected are included in the diff — this is intentional:
+    // the result shows all changes in the span covered by the selection.
+    fn resolve_multi_commit_range(
+        &self,
+        oids: &[&str],
+    ) -> Result<(Option<git2::Tree<'_>>, git2::Tree<'_>), AppError> {
+        if oids.len() < 2 {
+            return Err(AppError::Custom(
+                "resolve_multi_commit_range requires at least 2 OIDs".to_string(),
+            ));
+        }
+
+        let mut commits: Vec<git2::Commit<'_>> = oids
+            .iter()
+            .map(|oid| {
+                let oid = git2::Oid::from_str(oid)
+                    .map_err(|e| AppError::Custom(format!("Invalid OID: {e}")))?;
+                Ok(self.repo.find_commit(oid)?)
+            })
+            .collect::<Result<Vec<_>, AppError>>()?;
+
+        commits.sort_by_key(|c| c.author().when().seconds());
+
+        let newest = commits.pop().unwrap();
+        let oldest = commits.remove(0);
+
+        let newest_tree = newest.tree()?;
+        let parent_tree = if oldest.parent_count() > 0 {
+            Some(oldest.parent(0)?.tree()?)
+        } else {
+            None
+        };
+
+        Ok((parent_tree, newest_tree))
+    }
+
+    pub fn get_multi_commit_files(&self, oids: &[&str]) -> Result<Vec<FileEntry>, AppError> {
+        if oids.is_empty() {
+            return Ok(vec![]);
+        }
+        if oids.len() == 1 {
+            return self.get_commit_files(oids[0]);
+        }
+
+        let (parent_tree, newest_tree) = self.resolve_multi_commit_range(oids)?;
+        let diff = self
+            .repo
+            .diff_tree_to_tree(parent_tree.as_ref(), Some(&newest_tree), None)?;
+
+        Ok(Self::collect_file_entries(&diff))
+    }
+
+    pub fn get_multi_commit_file_diff(
+        &self,
+        oids: &[&str],
+        file_path: &str,
+        context_lines: u32,
+        ignore_whitespace: bool,
+    ) -> Result<FileDiff, AppError> {
+        if oids.is_empty() {
+            return Err(AppError::Custom("No commits provided".to_string()));
+        }
+        if oids.len() == 1 {
+            return self.get_commit_file_diff(oids[0], file_path, context_lines, ignore_whitespace);
+        }
+
+        let (parent_tree, newest_tree) = self.resolve_multi_commit_range(oids)?;
+
+        let mut diff_opts = DiffOptions::new();
+        diff_opts.pathspec(file_path);
+        diff_opts.context_lines(context_lines);
+        if ignore_whitespace {
+            diff_opts.ignore_whitespace(true);
+        }
+
+        let diff = self.repo.diff_tree_to_tree(
+            parent_tree.as_ref(),
+            Some(&newest_tree),
             Some(&mut diff_opts),
         )?;
 
