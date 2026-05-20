@@ -1,6 +1,7 @@
 import { clsx } from "clsx";
 import { useGitStore } from "@/stores/gitStore";
 import { useCommentCountByFile } from "@/lib/useCommentCountByFile";
+import { formatRename } from "@/lib/formatRename";
 import type { FileEntry, FileStatus } from "@/types/git";
 
 const statusConfig: Record<FileStatus, { label: string; color: string }> = {
@@ -29,6 +30,7 @@ function CommitFileItem({
   const parts = file.path.split("/");
   const filename = parts.pop() || file.path;
   const dir = parts.join("/");
+  const isRenamed = file.status === "renamed";
 
   return (
     <button
@@ -42,9 +44,17 @@ function CommitFileItem({
         {label}
       </span>
       <span className="flex-1 min-w-0 text-xs">
-        <span className="text-gray-900 dark:text-gray-100 truncate block">{filename}</span>
-        {dir && (
-          <span className="text-gray-400 dark:text-gray-500 truncate block">{dir}</span>
+        {isRenamed && file.oldPath ? (
+          <span className="text-gray-900 dark:text-gray-100 truncate block">
+            {formatRename(file.oldPath, file.path).plain}
+          </span>
+        ) : (
+          <>
+            <span className="text-gray-900 dark:text-gray-100 truncate block">{filename}</span>
+            {dir && (
+              <span className="text-gray-400 dark:text-gray-500 truncate block">{dir}</span>
+            )}
+          </>
         )}
       </span>
       {commentCount > 0 && (

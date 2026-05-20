@@ -1,5 +1,6 @@
 use git2::{
-    Delta, Diff, DiffOptions, IndexAddOption, Repository, ResetType, Signature, Sort, StatusOptions,
+    Delta, Diff, DiffFindOptions, DiffOptions, IndexAddOption, Repository, ResetType, Signature,
+    Sort, StatusOptions,
 };
 use std::path::Path;
 
@@ -122,18 +123,22 @@ impl GitRepository {
     pub fn get_file_diff(
         &self,
         file_path: &str,
+        old_path: Option<&str>,
         staged: bool,
         context_lines: u32,
         ignore_whitespace: bool,
     ) -> Result<FileDiff, AppError> {
         let mut diff_opts = DiffOptions::new();
         diff_opts.pathspec(file_path);
+        if let Some(old) = old_path {
+            diff_opts.pathspec(old);
+        }
         diff_opts.context_lines(context_lines);
         if ignore_whitespace {
             diff_opts.ignore_whitespace(true);
         }
 
-        let diff = if staged {
+        let mut diff = if staged {
             let head = self.repo.head()?.peel_to_tree()?;
             self.repo
                 .diff_tree_to_index(Some(&head), None, Some(&mut diff_opts))?
@@ -141,6 +146,8 @@ impl GitRepository {
             self.repo
                 .diff_index_to_workdir(None, Some(&mut diff_opts))?
         };
+
+        self.find_similar(&mut diff)?;
 
         let mut result = self.parse_diff(&diff, file_path)?;
 
@@ -162,13 +169,17 @@ impl GitRepository {
 
         let head_tree = self.repo.head().ok().and_then(|h| h.peel_to_tree().ok());
 
-        let staged_diff =
+        let mut staged_diff =
             self.repo
                 .diff_tree_to_index(head_tree.as_ref(), None, Some(&mut diff_opts))?;
 
-        let workdir_diff = self
+        self.find_similar(&mut staged_diff)?;
+
+        let mut workdir_diff = self
             .repo
             .diff_index_to_workdir(None, Some(&mut diff_opts))?;
+
+        self.find_similar(&mut workdir_diff)?;
 
         let mut diffs = Vec::new();
 
@@ -267,6 +278,13 @@ impl GitRepository {
             is_binary: false,
             language: detect_language(file_path),
         })
+    }
+
+    fn find_similar(&self, diff: &mut Diff) -> Result<(), AppError> {
+        let mut find_opts = DiffFindOptions::new();
+        find_opts.renames(true);
+        diff.find_similar(Some(&mut find_opts))?;
+        Ok(())
     }
 
     fn parse_diff(&self, diff: &Diff, file_path: &str) -> Result<FileDiff, AppError> {
@@ -532,9 +550,11 @@ impl GitRepository {
             None
         };
 
-        let diff = self
-            .repo
-            .diff_tree_to_tree(parent_tree.as_ref(), Some(&commit_tree), None)?;
+        let mut diff =
+            self.repo
+                .diff_tree_to_tree(parent_tree.as_ref(), Some(&commit_tree), None)?;
+
+        self.find_similar(&mut diff)?;
 
         Ok(Self::collect_file_entries(&diff))
     }
@@ -558,17 +578,18 @@ impl GitRepository {
         };
 
         let mut diff_opts = DiffOptions::new();
-        diff_opts.pathspec(file_path);
         diff_opts.context_lines(context_lines);
         if ignore_whitespace {
             diff_opts.ignore_whitespace(true);
         }
 
-        let diff = self.repo.diff_tree_to_tree(
+        let mut diff = self.repo.diff_tree_to_tree(
             parent_tree.as_ref(),
             Some(&commit_tree),
             Some(&mut diff_opts),
         )?;
+
+        self.find_similar(&mut diff)?;
 
         self.parse_diff(&diff, file_path)
     }
@@ -620,9 +641,11 @@ impl GitRepository {
         }
 
         let (parent_tree, newest_tree) = self.resolve_multi_commit_range(oids)?;
-        let diff = self
-            .repo
-            .diff_tree_to_tree(parent_tree.as_ref(), Some(&newest_tree), None)?;
+        let mut diff =
+            self.repo
+                .diff_tree_to_tree(parent_tree.as_ref(), Some(&newest_tree), None)?;
+
+        self.find_similar(&mut diff)?;
 
         Ok(Self::collect_file_entries(&diff))
     }
@@ -644,17 +667,18 @@ impl GitRepository {
         let (parent_tree, newest_tree) = self.resolve_multi_commit_range(oids)?;
 
         let mut diff_opts = DiffOptions::new();
-        diff_opts.pathspec(file_path);
         diff_opts.context_lines(context_lines);
         if ignore_whitespace {
             diff_opts.ignore_whitespace(true);
         }
 
-        let diff = self.repo.diff_tree_to_tree(
+        let mut diff = self.repo.diff_tree_to_tree(
             parent_tree.as_ref(),
             Some(&newest_tree),
             Some(&mut diff_opts),
         )?;
+
+        self.find_similar(&mut diff)?;
 
         self.parse_diff(&diff, file_path)
     }

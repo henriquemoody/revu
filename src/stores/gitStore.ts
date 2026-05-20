@@ -178,6 +178,7 @@ export const useGitStore = create<GitState>()((set, get) => ({
         diff = await invoke<FileDiff>("get_file_diff", {
           repoPath,
           filePath: file.path,
+          oldPath: file.oldPath || null,
           staged: file.staged,
           contextLines: fullContext ? 999999 : null,
           ignoreWhitespace: ignoreWhitespace || null,

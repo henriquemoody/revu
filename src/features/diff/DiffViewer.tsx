@@ -4,6 +4,7 @@ import { useCommentStore } from "@/stores/commentStore";
 import { useUiStore } from "@/stores/uiStore";
 import { UnifiedDiffView } from "./UnifiedDiffView";
 import { SplitDiffView } from "./SplitDiffView";
+import { formatRename } from "@/lib/formatRename";
 import type { Comment } from "@/types/comment";
 
 export function DiffViewer() {
@@ -132,12 +133,30 @@ export function DiffViewer() {
     <div className="h-full flex flex-col bg-white dark:bg-gray-900">
       <div className="flex-shrink-0 flex items-center justify-between px-4 py-2 border-b border-gray-200 dark:border-gray-700">
         <div className="flex items-center gap-2">
-          <span className="font-medium text-sm text-gray-900 dark:text-gray-100">
-            {currentDiff.path}
-          </span>
-          {currentDiff.oldPath && (
-            <span className="text-xs text-gray-500 dark:text-gray-400">
-              (renamed from {currentDiff.oldPath})
+          {currentDiff.oldPath && currentDiff.status === "renamed" ? (
+            <span className="font-medium text-sm">
+              {formatRename(currentDiff.oldPath, currentDiff.path).segments.map(
+                (seg, i) => (
+                  <span
+                    key={i}
+                    className={
+                      seg.type === "old"
+                        ? "text-red-500 dark:text-red-400"
+                        : seg.type === "new"
+                          ? "text-green-600 dark:text-green-400"
+                          : seg.type === "arrow"
+                            ? "text-gray-400 dark:text-gray-500"
+                            : "text-gray-900 dark:text-gray-100"
+                    }
+                  >
+                    {seg.text}
+                  </span>
+                ),
+              )}
+            </span>
+          ) : (
+            <span className="font-medium text-sm text-gray-900 dark:text-gray-100">
+              {currentDiff.path}
             </span>
           )}
         </div>

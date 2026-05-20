@@ -1,6 +1,7 @@
 import { clsx } from "clsx";
 import type { FileEntry, FileStatus } from "@/types/git";
 import { Checkbox } from "@/components/ui";
+import { formatRename } from "@/lib/formatRename";
 
 interface FileItemProps {
   file: FileEntry;
@@ -33,6 +34,7 @@ export function FileItem({
   const dirPath = file.path.includes("/")
     ? file.path.slice(0, file.path.lastIndexOf("/"))
     : "";
+  const isRenamed = file.status === "renamed";
 
   return (
     <div
@@ -59,13 +61,21 @@ export function FileItem({
       </span>
 
       <div className="flex-1 min-w-0 flex flex-col">
-        <span className="text-sm truncate text-gray-900 dark:text-gray-100">
-          {fileName}
-        </span>
-        {dirPath && (
-          <span className="text-xs truncate text-gray-500 dark:text-gray-400">
-            {dirPath}
+        {isRenamed && file.oldPath ? (
+          <span className="text-sm truncate text-gray-900 dark:text-gray-100">
+            {formatRename(file.oldPath, file.path).plain}
           </span>
+        ) : (
+          <>
+            <span className="text-sm truncate text-gray-900 dark:text-gray-100">
+              {fileName}
+            </span>
+            {dirPath && (
+              <span className="text-xs truncate text-gray-500 dark:text-gray-400">
+                {dirPath}
+              </span>
+            )}
+          </>
         )}
       </div>
 

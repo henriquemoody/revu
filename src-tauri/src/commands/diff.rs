@@ -5,6 +5,7 @@ use crate::git::{FileDiff, GitRepository};
 pub fn get_file_diff(
     repo_path: String,
     file_path: String,
+    old_path: Option<String>,
     staged: bool,
     context_lines: Option<u32>,
     ignore_whitespace: Option<bool>,
@@ -12,7 +13,7 @@ pub fn get_file_diff(
     let repo = GitRepository::open(&repo_path)?;
     let context = context_lines.unwrap_or(3);
     let ignore_ws = ignore_whitespace.unwrap_or(false);
-    repo.get_file_diff(&file_path, staged, context, ignore_ws)
+    repo.get_file_diff(&file_path, old_path.as_deref(), staged, context, ignore_ws)
 }
 
 #[tauri::command]
