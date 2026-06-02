@@ -14,7 +14,7 @@ dev: ## Start development server
 	bun tauri dev
 
 build: ## Build production app
-	bun tauri build
+	PATH="/usr/bin:$$PATH" bun tauri build
 
 build/%: ## Build for specific target (e.g., build/x86_64-apple-darwin)
 	bun tauri build --target $*

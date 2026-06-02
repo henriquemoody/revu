@@ -163,27 +163,30 @@ impl GitRepository {
         Ok(result)
     }
 
-    pub fn get_combined_diff(&self) -> Result<Vec<FileDiff>, AppError> {
-        let mut diff_opts = DiffOptions::new();
-        diff_opts.context_lines(3);
-
+    pub fn get_combined_diff(
+        &self,
+        context_lines: u32,
+        ignore_whitespace: bool,
+    ) -> Result<Vec<FileDiff>, AppError> {
         let head_tree = self.repo.head().ok().and_then(|h| h.peel_to_tree().ok());
 
-        let mut staged_diff =
-            self.repo
-                .diff_tree_to_index(head_tree.as_ref(), None, Some(&mut diff_opts))?;
+        let mut diff_opts = DiffOptions::new();
+        diff_opts.context_lines(context_lines);
+        if ignore_whitespace {
+            diff_opts.ignore_whitespace(true);
+        }
+        diff_opts.include_untracked(true);
+        diff_opts.recurse_untracked_dirs(true);
+        diff_opts.show_untracked_content(true);
 
-        self.find_similar(&mut staged_diff)?;
-
-        let mut workdir_diff = self
+        let mut diff = self
             .repo
-            .diff_index_to_workdir(None, Some(&mut diff_opts))?;
+            .diff_tree_to_workdir(head_tree.as_ref(), Some(&mut diff_opts))?;
 
-        self.find_similar(&mut workdir_diff)?;
+        self.find_similar(&mut diff)?;
 
         let mut diffs = Vec::new();
-
-        for delta in staged_diff.deltas() {
+        for delta in diff.deltas() {
             let path = delta
                 .new_file()
                 .path()
@@ -191,24 +194,49 @@ impl GitRepository {
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_default();
 
-            if let Ok(diff) = self.parse_diff(&staged_diff, &path) {
-                diffs.push(diff);
-            }
-        }
+            let is_untracked = matches!(delta.status(), Delta::Added)
+                && matches!(
+                    self.repo.status_file(Path::new(&path)),
+                    Ok(s) if s.is_wt_new() && !s.is_index_new()
+                );
 
-        for delta in workdir_diff.deltas() {
-            let path = delta
-                .new_file()
-                .path()
-                .or_else(|| delta.old_file().path())
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_default();
+            let file_diff = match self.parse_diff(&diff, &path) {
+                Ok(fd) => fd,
+                Err(_) => FileDiff {
+                    path: path.clone(),
+                    old_path: None,
+                    status: if is_untracked {
+                        FileStatus::Untracked
+                    } else {
+                        FileStatus::Added
+                    },
+                    hunks: vec![],
+                    is_binary: false,
+                    language: detect_language(&path),
+                },
+            };
 
-            if !diffs.iter().any(|d| d.path == path) {
-                if let Ok(diff) = self.parse_diff(&workdir_diff, &path) {
-                    diffs.push(diff);
+            let mut diff_result = if file_diff.hunks.is_empty()
+                && (file_diff.status == FileStatus::Added || is_untracked)
+            {
+                let status = if is_untracked {
+                    FileStatus::Untracked
+                } else {
+                    file_diff.status.clone()
+                };
+                match self.create_new_file_diff(&path, status) {
+                    Ok(new_diff) => new_diff,
+                    Err(_) => file_diff,
                 }
+            } else {
+                file_diff
+            };
+
+            if is_untracked {
+                diff_result.status = FileStatus::Untracked;
             }
+
+            diffs.push(diff_result);
         }
 
         Ok(diffs)
@@ -681,6 +709,63 @@ impl GitRepository {
         self.find_similar(&mut diff)?;
 
         self.parse_diff(&diff, file_path)
+    }
+
+    pub fn get_combined_commit_diff(
+        &self,
+        oids: &[&str],
+        context_lines: u32,
+        ignore_whitespace: bool,
+    ) -> Result<Vec<FileDiff>, AppError> {
+        if oids.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let (parent_tree, commit_tree) = if oids.len() == 1 {
+            let oid = git2::Oid::from_str(oids[0])
+                .map_err(|e| AppError::Custom(format!("Invalid OID: {e}")))?;
+            let commit = self.repo.find_commit(oid)?;
+            let tree = commit.tree()?;
+            let parent = if commit.parent_count() > 0 {
+                Some(commit.parent(0)?.tree()?)
+            } else {
+                None
+            };
+            (parent, tree)
+        } else {
+            let (parent, tree) = self.resolve_multi_commit_range(oids)?;
+            (parent, tree)
+        };
+
+        let mut diff_opts = DiffOptions::new();
+        diff_opts.context_lines(context_lines);
+        if ignore_whitespace {
+            diff_opts.ignore_whitespace(true);
+        }
+
+        let mut diff = self.repo.diff_tree_to_tree(
+            parent_tree.as_ref(),
+            Some(&commit_tree),
+            Some(&mut diff_opts),
+        )?;
+
+        self.find_similar(&mut diff)?;
+
+        let mut diffs = Vec::new();
+        for delta in diff.deltas() {
+            let path = delta
+                .new_file()
+                .path()
+                .or_else(|| delta.old_file().path())
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default();
+
+            if let Ok(file_diff) = self.parse_diff(&diff, &path) {
+                diffs.push(file_diff);
+            }
+        }
+
+        Ok(diffs)
     }
 
     pub fn stage_file(&self, file_path: &str) -> Result<(), AppError> {

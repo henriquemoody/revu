@@ -17,9 +17,15 @@ pub fn get_file_diff(
 }
 
 #[tauri::command]
-pub fn get_combined_diff(repo_path: String) -> Result<Vec<FileDiff>, AppError> {
+pub fn get_combined_diff(
+    repo_path: String,
+    context_lines: Option<u32>,
+    ignore_whitespace: Option<bool>,
+) -> Result<Vec<FileDiff>, AppError> {
     let repo = GitRepository::open(&repo_path)?;
-    repo.get_combined_diff()
+    let context = context_lines.unwrap_or(3);
+    let ignore_ws = ignore_whitespace.unwrap_or(false);
+    repo.get_combined_diff(context, ignore_ws)
 }
 
 #[tauri::command]

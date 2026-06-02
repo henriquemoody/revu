@@ -67,7 +67,7 @@ function CommitFileItem({
 }
 
 export function CommitFileList() {
-  const { commitFiles, selectedFile, selectFile, selectedCommits } = useGitStore();
+  const { commitFiles, selectedFilePath, selectFile, selectedCommits } = useGitStore();
   const commentCountByFile = useCommentCountByFile();
 
   if (selectedCommits.length === 0) return null;
@@ -96,9 +96,9 @@ export function CommitFileList() {
         <CommitFileItem
           key={file.path}
           file={file}
-          isSelected={selectedFile?.path === file.path}
+          isSelected={selectedFilePath === file.path}
           commentCount={commentCountByFile[file.path] || 0}
-          onSelect={() => selectFile(file)}
+          onSelect={() => selectFile(file.path)}
         />
       ))}
     </div>

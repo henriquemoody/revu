@@ -67,3 +67,19 @@ pub fn get_multi_commit_file_diff(
         ignore_whitespace.unwrap_or(false),
     )
 }
+
+#[tauri::command]
+pub fn get_combined_commit_diff(
+    repo_path: String,
+    oids: Vec<String>,
+    context_lines: Option<u32>,
+    ignore_whitespace: Option<bool>,
+) -> Result<Vec<FileDiff>, AppError> {
+    let repo = GitRepository::open(&repo_path)?;
+    let oid_refs: Vec<&str> = oids.iter().map(|s| s.as_str()).collect();
+    repo.get_combined_commit_diff(
+        &oid_refs,
+        context_lines.unwrap_or(3),
+        ignore_whitespace.unwrap_or(false),
+    )
+}

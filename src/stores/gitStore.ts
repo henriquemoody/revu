@@ -11,29 +11,27 @@ interface DemoState {
 interface GitState {
   repoPath: string | null;
   status: RepositoryStatus | null;
-  selectedFile: FileEntry | null;
-  currentDiff: FileDiff | null;
+  selectedFilePath: string | null;
+  scrollToSelectedFile: boolean;
+  combinedDiffs: FileDiff[] | null;
   isLoading: boolean;
   error: string | null;
   isDemo: boolean;
   _demoState: DemoState | null;
   reviewMode: ReviewMode;
   commits: CommitInfo[];
-  commitsPaginated: boolean; // true when showing paginated log (not branch-scoped)
-  commitsPage: number; // current page in paginated mode
+  commitsPaginated: boolean;
+  commitsPage: number;
   selectedCommits: CommitInfo[];
   commitFiles: FileEntry[];
-  _fileContentCache: string[] | null;
-  fileTotalLines: number | null;
+  _fileContentCaches: Record<string, string[]>;
+  _fileTotalLines: Record<string, number>;
 
   setRepoPath: (path: string) => Promise<void>;
   refreshStatus: () => Promise<void>;
-  selectFile: (
-    file: FileEntry | null,
-    fullContext?: boolean,
-    ignoreWhitespace?: boolean,
-  ) => Promise<void>;
-  fetchDiff: (fullContext: boolean, ignoreWhitespace: boolean) => Promise<void>;
+  selectFile: (filePath: string | null) => void;
+  clearScrollToSelectedFile: () => void;
+  fetchDiffs: (fullContext: boolean, ignoreWhitespace: boolean) => Promise<void>;
   stageFile: (filePath: string) => Promise<void>;
   unstageFile: (filePath: string) => Promise<void>;
   stageAll: () => Promise<void>;
@@ -49,17 +47,19 @@ interface GitState {
   selectCommits: (commits: CommitInfo[]) => Promise<void>;
   toggleCommitSelection: (commit: CommitInfo) => Promise<void>;
   _fetchCommitFiles: (commits: CommitInfo[]) => Promise<void>;
-  _fetchDiff: (file: FileEntry, fullContext: boolean, ignoreWhitespace: boolean) => Promise<void>;
-  expandHunkContext: (hunkIndex: number, direction: "up" | "down" | "tail", count?: number) => Promise<void>;
-  // Demo mode - accepts pre-built demo state
+  _fetchChangesDiff: (fullContext?: boolean, ignoreWhitespace?: boolean) => Promise<void>;
+  _fetchCommitDiffs: (commits: CommitInfo[], fullContext?: boolean, ignoreWhitespace?: boolean) => Promise<void>;
+  expandHunkContext: (filePath: string, hunkIndex: number, direction: "up" | "down" | "tail", count?: number) => Promise<void>;
+  _orderBySidebar: (diffs: FileDiff[]) => FileDiff[];
   initDemoMode: (demoState: DemoState) => void;
 }
 
 export const useGitStore = create<GitState>()((set, get) => ({
   repoPath: null,
   status: null,
-  selectedFile: null,
-  currentDiff: null,
+  selectedFilePath: null,
+  scrollToSelectedFile: false,
+  combinedDiffs: null,
   isLoading: false,
   error: null,
   isDemo: false,
@@ -70,21 +70,20 @@ export const useGitStore = create<GitState>()((set, get) => ({
   commitsPage: 0,
   selectedCommits: [],
   commitFiles: [],
-  _fileContentCache: null,
-  fileTotalLines: null,
+  _fileContentCaches: {},
+  _fileTotalLines: {},
 
   initDemoMode: (demoState: DemoState) => {
     const { status, diffs } = demoState;
     const firstFile = status.files.find((f) => !f.staged) || status.files[0];
-    const diff = firstFile ? diffs[firstFile.path] || null : null;
 
     set({
       isDemo: true,
       _demoState: demoState,
       repoPath: status.path,
       status,
-      selectedFile: firstFile || null,
-      currentDiff: diff,
+      selectedFilePath: firstFile?.path ?? null,
+      combinedDiffs: Object.values(diffs),
       isLoading: false,
       error: null,
     });
@@ -92,282 +91,128 @@ export const useGitStore = create<GitState>()((set, get) => ({
 
   setRepoPath: async (path: string) => {
     const { isDemo } = get();
-    if (isDemo) return; // Ignore in demo mode
+    if (isDemo) return;
 
-    set({ repoPath: path, isLoading: true, error: null });
+    set({ repoPath: path, isLoading: true, error: null, combinedDiffs: null });
     try {
-      const status = await invoke<RepositoryStatus>("get_status", {
-        repoPath: path,
-      });
+      const status = await invoke<RepositoryStatus>("get_status", { repoPath: path });
       set({ status, isLoading: false });
+      get()._fetchChangesDiff();
     } catch (e) {
       set({ error: String(e), isLoading: false });
     }
   },
 
   refreshStatus: async () => {
-    const { repoPath, isDemo } = get();
-    if (!repoPath || isDemo) return; // Ignore in demo mode
+    const { repoPath, isDemo, reviewMode, selectedCommits } = get();
+    if (!repoPath || isDemo) return;
 
-    set({ isLoading: true, error: null });
+    set({ isLoading: true, error: null, combinedDiffs: null });
     try {
-      const status = await invoke<RepositoryStatus>("get_status", { repoPath });
-      set({ status, isLoading: false });
+      if (reviewMode === "changes") {
+        const status = await invoke<RepositoryStatus>("get_status", { repoPath });
+        set({ status, isLoading: false });
+        get()._fetchChangesDiff();
+      } else if (selectedCommits.length > 0) {
+        set({ isLoading: false });
+        get()._fetchCommitDiffs(selectedCommits);
+      } else {
+        set({ isLoading: false });
+      }
     } catch (e) {
       set({ error: String(e), isLoading: false });
     }
   },
 
-  selectFile: async (
-    file: FileEntry | null,
-    fullContext = false,
-    ignoreWhitespace = false,
-  ) => {
+  selectFile: (filePath: string | null) => {
+    set({ selectedFilePath: filePath, scrollToSelectedFile: true });
+  },
+
+  clearScrollToSelectedFile: () => {
+    set({ scrollToSelectedFile: false });
+  },
+
+  _orderBySidebar: (diffs: FileDiff[]) => {
+    const { reviewMode, status, commitFiles } = get();
+    const sidebarFiles = reviewMode === "commits" ? commitFiles : (status?.files ?? []);
+    const orderMap = new Map(sidebarFiles.map((f, i) => [f.path, i]));
+    return [...diffs].sort((a, b) => {
+      const aIdx = orderMap.get(a.path) ?? Infinity;
+      const bIdx = orderMap.get(b.path) ?? Infinity;
+      return aIdx - bIdx;
+    });
+  },
+
+  fetchDiffs: async (fullContext: boolean, ignoreWhitespace: boolean) => {
+    const { reviewMode, selectedCommits, repoPath } = get();
+    if (!repoPath) return;
+
+    if (reviewMode === "commits" && selectedCommits.length > 0) {
+      get()._fetchCommitDiffs(selectedCommits, fullContext, ignoreWhitespace);
+    } else {
+      get()._fetchChangesDiff(fullContext, ignoreWhitespace);
+    }
+  },
+
+  _fetchChangesDiff: async (fullContext?: boolean, ignoreWhitespace?: boolean) => {
     const { repoPath, isDemo, _demoState } = get();
     if (!repoPath) return;
 
-    set({ selectedFile: file, currentDiff: null, _fileContentCache: null, fileTotalLines: null });
-
-    if (file) {
-      if (isDemo && _demoState) {
-        set({ currentDiff: _demoState.diffs[file.path] || null });
-        return;
-      }
-      await get()._fetchDiff(file, fullContext, ignoreWhitespace);
-    }
-  },
-
-  fetchDiff: async (fullContext: boolean, ignoreWhitespace: boolean) => {
-    const { repoPath, selectedFile, isDemo, _demoState } = get();
-    if (!repoPath || !selectedFile) return;
-
     if (isDemo && _demoState) {
-      set({ currentDiff: _demoState.diffs[selectedFile.path] || null, _fileContentCache: null, fileTotalLines: null });
+      set({ combinedDiffs: Object.values(_demoState.diffs) });
       return;
     }
 
-    set({ _fileContentCache: null, fileTotalLines: null });
-    await get()._fetchDiff(selectedFile, fullContext, ignoreWhitespace);
-  },
-
-  _fetchDiff: async (file: FileEntry, fullContext: boolean, ignoreWhitespace: boolean) => {
-    const { repoPath, reviewMode, selectedCommits } = get();
-    if (!repoPath) return;
-
     try {
-      let diff: FileDiff;
-      if (reviewMode === "commits" && selectedCommits.length > 0) {
-        if (selectedCommits.length === 1) {
-          diff = await invoke<FileDiff>("get_commit_file_diff", {
-            repoPath,
-            oid: selectedCommits[0].oid,
-            filePath: file.path,
-            contextLines: fullContext ? 999999 : null,
-            ignoreWhitespace: ignoreWhitespace || null,
-          });
-        } else {
-          diff = await invoke<FileDiff>("get_multi_commit_file_diff", {
-            repoPath,
-            oids: selectedCommits.map((c) => c.oid),
-            filePath: file.path,
-            contextLines: fullContext ? 999999 : null,
-            ignoreWhitespace: ignoreWhitespace || null,
-          });
-        }
-      } else {
-        diff = await invoke<FileDiff>("get_file_diff", {
-          repoPath,
-          filePath: file.path,
-          oldPath: file.oldPath || null,
-          staged: file.staged,
-          contextLines: fullContext ? 999999 : null,
-          ignoreWhitespace: ignoreWhitespace || null,
-        });
-      }
-      set({ currentDiff: diff });
+      const diffs = await invoke<FileDiff[]>("get_combined_diff", {
+        repoPath,
+        contextLines: fullContext ? 999999 : null,
+        ignoreWhitespace: ignoreWhitespace || null,
+      });
+      const ordered = get()._orderBySidebar(diffs);
+      set({ combinedDiffs: ordered });
     } catch (e) {
       set({ error: String(e) });
     }
   },
 
-  expandHunkContext: async (hunkIndex: number, direction: "up" | "down" | "tail", count = 20) => {
-    const { repoPath, currentDiff, selectedFile, reviewMode, selectedCommits, _fileContentCache } = get();
-    if (!repoPath || !currentDiff || !selectedFile) return;
+  _fetchCommitDiffs: async (commits: CommitInfo[], fullContext?: boolean, ignoreWhitespace?: boolean) => {
+    const { repoPath } = get();
+    if (!repoPath || commits.length === 0) return;
 
-    // Determine source for file content
-    let source: string;
-    if (reviewMode === "commits" && selectedCommits.length > 0) {
-      // Use newest commit for file content
-      const sorted = [...selectedCommits].sort((a, b) => a.timestamp - b.timestamp);
-      source = sorted[sorted.length - 1].oid;
-    } else if (selectedFile.staged) {
-      source = "index";
-    } else {
-      source = "workdir";
+    try {
+      const diffs = await invoke<FileDiff[]>("get_combined_commit_diff", {
+        repoPath,
+        oids: commits.map((c) => c.oid),
+        contextLines: fullContext ? 999999 : null,
+        ignoreWhitespace: ignoreWhitespace || null,
+      });
+      const ordered = get()._orderBySidebar(diffs);
+      set({ combinedDiffs: ordered });
+    } catch (e) {
+      set({ error: String(e) });
     }
-
-    // Fetch file content if not cached
-    let fileLines = _fileContentCache;
-    if (!fileLines) {
-      try {
-        fileLines = await invoke<string[]>("get_file_content", {
-          repoPath,
-          filePath: currentDiff.path,
-          source,
-        });
-        set({ _fileContentCache: fileLines, fileTotalLines: fileLines.length });
-      } catch {
-        return;
-      }
-    }
-
-    // Deep clone hunks
-    const hunks: DiffHunk[] = currentDiff.hunks.map((h) => ({
-      ...h,
-      lines: [...h.lines],
-    }));
-
-    if (direction === "tail") {
-      // Append context lines after the last hunk
-      const lastHunk = hunks[hunkIndex];
-      const tailStart = lastHunk.newStart + lastHunk.newLines;
-      const tailStartOld = lastHunk.oldStart + lastHunk.oldLines;
-      const tailGapSize = fileLines.length - tailStart + 1;
-      if (tailGapSize <= 0) return;
-
-      const actual = Math.min(count, tailGapSize);
-      const newLines: DiffLine[] = [];
-      for (let i = 0; i < actual; i++) {
-        newLines.push({
-          lineType: "context",
-          content: (fileLines[tailStart - 1 + i] ?? "") + "\n",
-          oldLineNo: tailStartOld + i,
-          newLineNo: tailStart + i,
-        });
-      }
-      lastHunk.lines = [...lastHunk.lines, ...newLines];
-      lastHunk.oldLines += actual;
-      lastHunk.newLines += actual;
-      lastHunk.header = `@@ -${lastHunk.oldStart},${lastHunk.oldLines} +${lastHunk.newStart},${lastHunk.newLines} @@`;
-
-      set({ currentDiff: { ...currentDiff, hunks } });
-      return;
-    }
-
-    const hunk = hunks[hunkIndex];
-
-    // Compute gap above this hunk
-    const { gapNewTop, gapOldTop, gapNewBottom, gapSize } = computeHunkGap(hunks, hunkIndex);
-
-    if (gapSize <= 0) return;
-
-    if (direction === "down") {
-      // Prepend context lines to this hunk from bottom of gap
-      const actual = Math.min(count, gapSize);
-      const startNew = gapNewBottom - actual + 1;
-      const startOld = hunk.oldStart - actual;
-
-      const newLines: DiffLine[] = [];
-      for (let i = 0; i < actual; i++) {
-        const newLineNo = startNew + i;
-        const oldLineNo = startOld + i;
-        newLines.push({
-          lineType: "context",
-          content: (fileLines[newLineNo - 1] ?? "") + "\n",
-          oldLineNo,
-          newLineNo,
-        });
-      }
-
-      hunk.lines = [...newLines, ...hunk.lines];
-      hunk.oldStart -= actual;
-      hunk.oldLines += actual;
-      hunk.newStart -= actual;
-      hunk.newLines += actual;
-      // Note: any trailing function context git appends (e.g. "@@ ... @@ function foo()") is
-      // intentionally omitted — we regenerate the header from line numbers alone after expansion.
-      hunk.header = `@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`;
-    } else {
-      // Append context lines to previous hunk from top of gap
-      if (hunkIndex === 0) return;
-
-      const prevHunk = hunks[hunkIndex - 1];
-      const actual = Math.min(count, gapSize);
-      const startNew = gapNewTop;
-      const startOld = gapOldTop;
-
-      const newLines: DiffLine[] = [];
-      for (let i = 0; i < actual; i++) {
-        const newLineNo = startNew + i;
-        const oldLineNo = startOld + i;
-        newLines.push({
-          lineType: "context",
-          content: (fileLines[newLineNo - 1] ?? "") + "\n",
-          oldLineNo,
-          newLineNo,
-        });
-      }
-
-      prevHunk.lines = [...prevHunk.lines, ...newLines];
-      prevHunk.oldLines += actual;
-      prevHunk.newLines += actual;
-      prevHunk.header = `@@ -${prevHunk.oldStart},${prevHunk.oldLines} +${prevHunk.newStart},${prevHunk.newLines} @@`;
-    }
-
-    // Merge adjacent/overlapping hunks
-    for (let i = hunks.length - 1; i > 0; i--) {
-      const prev = hunks[i - 1];
-      const curr = hunks[i];
-      if (prev.newStart + prev.newLines >= curr.newStart) {
-        // Remove overlapping context lines from curr
-        const overlap = (prev.newStart + prev.newLines) - curr.newStart;
-        if (overlap > 0) {
-          curr.lines = curr.lines.slice(overlap);
-        }
-        prev.lines = [...prev.lines, ...curr.lines];
-        prev.oldLines = (curr.oldStart + curr.oldLines) - prev.oldStart;
-        prev.newLines = (curr.newStart + curr.newLines) - prev.newStart;
-        prev.header = `@@ -${prev.oldStart},${prev.oldLines} +${prev.newStart},${prev.newLines} @@`;
-        hunks.splice(i, 1);
-      }
-    }
-
-    set({ currentDiff: { ...currentDiff, hunks } });
   },
 
   stageFile: async (filePath: string) => {
-    const { repoPath, refreshStatus, selectFile, selectedFile, isDemo } = get();
-    if (!repoPath || isDemo) return; // Disabled in demo mode
+    const { repoPath, refreshStatus, isDemo } = get();
+    if (!repoPath || isDemo) return;
 
     try {
       await invoke("stage_file", { repoPath, filePath });
       await refreshStatus();
-      if (selectedFile?.path === filePath) {
-        const newStatus = get().status;
-        const newFile = newStatus?.files.find(
-          (f) => f.path === filePath && f.staged,
-        );
-        if (newFile) await selectFile(newFile);
-      }
     } catch (e) {
       set({ error: String(e) });
     }
   },
 
   unstageFile: async (filePath: string) => {
-    const { repoPath, refreshStatus, selectFile, selectedFile, isDemo } = get();
-    if (!repoPath || isDemo) return; // Disabled in demo mode
+    const { repoPath, refreshStatus, isDemo } = get();
+    if (!repoPath || isDemo) return;
 
     try {
       await invoke("unstage_file", { repoPath, filePath });
       await refreshStatus();
-      if (selectedFile?.path === filePath) {
-        const newStatus = get().status;
-        const newFile = newStatus?.files.find(
-          (f) => f.path === filePath && !f.staged,
-        );
-        if (newFile) await selectFile(newFile);
-      }
     } catch (e) {
       set({ error: String(e) });
     }
@@ -375,7 +220,7 @@ export const useGitStore = create<GitState>()((set, get) => ({
 
   stageAll: async () => {
     const { repoPath, refreshStatus, isDemo } = get();
-    if (!repoPath || isDemo) return; // Disabled in demo mode
+    if (!repoPath || isDemo) return;
 
     try {
       await invoke("stage_all", { repoPath });
@@ -387,7 +232,7 @@ export const useGitStore = create<GitState>()((set, get) => ({
 
   unstageAll: async () => {
     const { repoPath, refreshStatus, isDemo } = get();
-    if (!repoPath || isDemo) return; // Disabled in demo mode
+    if (!repoPath || isDemo) return;
 
     try {
       await invoke("unstage_all", { repoPath });
@@ -400,23 +245,23 @@ export const useGitStore = create<GitState>()((set, get) => ({
   commit: async (message: string) => {
     const { repoPath, refreshStatus, isDemo } = get();
     if (!repoPath) throw new Error("No repository");
-    if (isDemo) return "demo-commit-oid"; // Mock in demo mode
+    if (isDemo) return "demo-commit-oid";
 
     const oid = await invoke<string>("commit", { repoPath, message });
     await refreshStatus();
-    set({ selectedFile: null, currentDiff: null });
+    set({ selectedFilePath: null });
     return oid;
   },
 
   discardFile: async (filePath: string) => {
-    const { repoPath, refreshStatus, selectedFile, isDemo } = get();
-    if (!repoPath || isDemo) return; // Disabled in demo mode
+    const { repoPath, refreshStatus, selectedFilePath, isDemo } = get();
+    if (!repoPath || isDemo) return;
 
     try {
       await invoke("discard_file", { repoPath, filePath });
       await refreshStatus();
-      if (selectedFile?.path === filePath) {
-        set({ selectedFile: null, currentDiff: null });
+      if (selectedFilePath === filePath) {
+        set({ selectedFilePath: null });
       }
     } catch (e) {
       set({ error: String(e) });
@@ -425,12 +270,12 @@ export const useGitStore = create<GitState>()((set, get) => ({
 
   discardAll: async () => {
     const { repoPath, refreshStatus, isDemo } = get();
-    if (!repoPath || isDemo) return; // Disabled in demo mode
+    if (!repoPath || isDemo) return;
 
     try {
       await invoke("discard_all", { repoPath });
       await refreshStatus();
-      set({ selectedFile: null, currentDiff: null });
+      set({ selectedFilePath: null });
     } catch (e) {
       set({ error: String(e) });
     }
@@ -444,8 +289,8 @@ export const useGitStore = create<GitState>()((set, get) => ({
 
     set({
       reviewMode: mode,
-      selectedFile: null,
-      currentDiff: null,
+      selectedFilePath: null,
+      combinedDiffs: null,
       commits: [],
       selectedCommits: [],
       commitFiles: [],
@@ -466,13 +311,11 @@ export const useGitStore = create<GitState>()((set, get) => ({
 
     set({ isLoading: true, error: null });
     try {
-      // Try branch-scoped log first (commits not in main/master/develop/dev)
       const branchCommits = await invoke<CommitInfo[]>("get_branch_log", { repoPath });
       if (branchCommits.length > 0) {
         set({ commits: branchCommits, commitsPaginated: false, commitsPage: 0, isLoading: false });
         return;
       }
-      // Fall back to paginated log
       const commits = await invoke<CommitInfo[]>("get_commit_log", { repoPath, count: 25, skip: 0 });
       set({ commits, commitsPaginated: true, commitsPage: 0, isLoading: false });
     } catch (e) {
@@ -525,16 +368,22 @@ export const useGitStore = create<GitState>()((set, get) => ({
     if (!repoPath) return;
 
     const selectedCommits = commit ? [commit] : [];
-    set({ selectedCommits, selectedFile: null, currentDiff: null, commitFiles: [], _fileContentCache: null, fileTotalLines: null });
+    set({ selectedCommits, selectedFilePath: null, combinedDiffs: null, commitFiles: [], _fileContentCaches: {}, _fileTotalLines: {} });
     await get()._fetchCommitFiles(selectedCommits);
+    if (selectedCommits.length > 0) {
+      get()._fetchCommitDiffs(selectedCommits);
+    }
   },
 
   selectCommits: async (commits: CommitInfo[]) => {
     const { repoPath } = get();
     if (!repoPath) return;
 
-    set({ selectedCommits: commits, selectedFile: null, currentDiff: null, commitFiles: [], _fileContentCache: null, fileTotalLines: null });
+    set({ selectedCommits: commits, selectedFilePath: null, combinedDiffs: null, commitFiles: [], _fileContentCaches: {}, _fileTotalLines: {} });
     await get()._fetchCommitFiles(commits);
+    if (commits.length > 0) {
+      get()._fetchCommitDiffs(commits);
+    }
   },
 
   toggleCommitSelection: async (commit: CommitInfo) => {
@@ -546,7 +395,152 @@ export const useGitStore = create<GitState>()((set, get) => ({
       ? selectedCommits.filter((c) => c.oid !== commit.oid)
       : [...selectedCommits, commit];
 
-    set({ selectedCommits: newSelectedCommits, selectedFile: null, currentDiff: null, commitFiles: [], _fileContentCache: null, fileTotalLines: null });
+    set({ selectedCommits: newSelectedCommits, selectedFilePath: null, combinedDiffs: null, commitFiles: [], _fileContentCaches: {}, _fileTotalLines: {} });
     await get()._fetchCommitFiles(newSelectedCommits);
+    if (newSelectedCommits.length > 0) {
+      get()._fetchCommitDiffs(newSelectedCommits);
+    }
+  },
+
+  expandHunkContext: async (filePath: string, hunkIndex: number, direction: "up" | "down" | "tail", count = 20) => {
+    const { repoPath, combinedDiffs, reviewMode, selectedCommits, _fileContentCaches } = get();
+    if (!repoPath || !combinedDiffs) return;
+
+    const diffIndex = combinedDiffs.findIndex((d) => d.path === filePath);
+    if (diffIndex === -1) return;
+    const currentDiff = combinedDiffs[diffIndex];
+
+    let source: string;
+    if (reviewMode === "commits" && selectedCommits.length > 0) {
+      const sorted = [...selectedCommits].sort((a, b) => a.timestamp - b.timestamp);
+      source = sorted[sorted.length - 1].oid;
+    } else {
+      const file = get().status?.files.find((f) => f.path === filePath);
+      source = file?.staged ? "index" : "workdir";
+    }
+
+    let fileLines = _fileContentCaches[filePath];
+    if (!fileLines) {
+      try {
+        fileLines = await invoke<string[]>("get_file_content", {
+          repoPath,
+          filePath,
+          source,
+        });
+        set({
+          _fileContentCaches: { ..._fileContentCaches, [filePath]: fileLines! },
+          _fileTotalLines: { ...get()._fileTotalLines, [filePath]: fileLines!.length },
+        });
+      } catch {
+        return;
+      }
+    }
+
+    const hunks: DiffHunk[] = currentDiff.hunks.map((h) => ({
+      ...h,
+      lines: [...h.lines],
+    }));
+
+    if (direction === "tail") {
+      const lastHunk = hunks[hunkIndex];
+      const tailStart = lastHunk.newStart + lastHunk.newLines;
+      const tailStartOld = lastHunk.oldStart + lastHunk.oldLines;
+      const tailGapSize = fileLines.length - tailStart + 1;
+      if (tailGapSize <= 0) return;
+
+      const actual = Math.min(count, tailGapSize);
+      const newLines: DiffLine[] = [];
+      for (let i = 0; i < actual; i++) {
+        newLines.push({
+          lineType: "context",
+          content: (fileLines[tailStart - 1 + i] ?? "") + "\n",
+          oldLineNo: tailStartOld + i,
+          newLineNo: tailStart + i,
+        });
+      }
+      lastHunk.lines = [...lastHunk.lines, ...newLines];
+      lastHunk.oldLines += actual;
+      lastHunk.newLines += actual;
+      lastHunk.header = `@@ -${lastHunk.oldStart},${lastHunk.oldLines} +${lastHunk.newStart},${lastHunk.newLines} @@`;
+
+      const newDiffs = [...combinedDiffs];
+      newDiffs[diffIndex] = { ...currentDiff, hunks };
+      set({ combinedDiffs: newDiffs });
+      return;
+    }
+
+    const hunk = hunks[hunkIndex];
+    const { gapNewTop, gapOldTop, gapNewBottom, gapSize } = computeHunkGap(hunks, hunkIndex);
+
+    if (gapSize <= 0) return;
+
+    if (direction === "down") {
+      const actual = Math.min(count, gapSize);
+      const startNew = gapNewBottom - actual + 1;
+      const startOld = hunk.oldStart - actual;
+
+      const newLines: DiffLine[] = [];
+      for (let i = 0; i < actual; i++) {
+        const newLineNo = startNew + i;
+        const oldLineNo = startOld + i;
+        newLines.push({
+          lineType: "context",
+          content: (fileLines[newLineNo - 1] ?? "") + "\n",
+          oldLineNo,
+          newLineNo,
+        });
+      }
+
+      hunk.lines = [...newLines, ...hunk.lines];
+      hunk.oldStart -= actual;
+      hunk.oldLines += actual;
+      hunk.newStart -= actual;
+      hunk.newLines += actual;
+      hunk.header = `@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`;
+    } else {
+      if (hunkIndex === 0) return;
+
+      const prevHunk = hunks[hunkIndex - 1];
+      const actual = Math.min(count, gapSize);
+      const startNew = gapNewTop;
+      const startOld = gapOldTop;
+
+      const newLines: DiffLine[] = [];
+      for (let i = 0; i < actual; i++) {
+        const newLineNo = startNew + i;
+        const oldLineNo = startOld + i;
+        newLines.push({
+          lineType: "context",
+          content: (fileLines[newLineNo - 1] ?? "") + "\n",
+          oldLineNo,
+          newLineNo,
+        });
+      }
+
+      prevHunk.lines = [...prevHunk.lines, ...newLines];
+      prevHunk.oldLines += actual;
+      prevHunk.newLines += actual;
+      prevHunk.header = `@@ -${prevHunk.oldStart},${prevHunk.oldLines} +${prevHunk.newStart},${prevHunk.newLines} @@`;
+    }
+
+    for (let i = hunks.length - 1; i > 0; i--) {
+      const prev = hunks[i - 1];
+      const curr = hunks[i];
+      if (prev.newStart + prev.newLines >= curr.newStart) {
+        const overlap = (prev.newStart + prev.newLines) - curr.newStart;
+        if (overlap > 0) {
+          curr.lines = curr.lines.slice(overlap);
+        }
+        prev.lines = [...prev.lines, ...curr.lines];
+        prev.oldLines = (curr.oldStart + curr.oldLines) - prev.oldStart;
+        prev.newLines = (curr.newStart + curr.newLines) - prev.newStart;
+        prev.header = `@@ -${prev.oldStart},${prev.oldLines} +${prev.newStart},${prev.newLines} @@`;
+        hunks.splice(i, 1);
+      }
+    }
+
+    const newDiffs = [...combinedDiffs];
+    newDiffs[diffIndex] = { ...currentDiff, hunks };
+    set({ combinedDiffs: newDiffs });
   },
 }));

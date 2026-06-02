@@ -43,6 +43,7 @@ pub fn run() {
             get_commit_file_diff,
             get_multi_commit_files,
             get_multi_commit_file_diff,
+            get_combined_commit_diff,
             stage_file,
             unstage_file,
             stage_all,

@@ -46,7 +46,7 @@ export function CommentList() {
     clearAllComments,
     setDraft,
   } = useCommentStore();
-  const { repoPath, status, selectFile, selectedCommits } = useGitStore();
+  const { repoPath, selectFile, selectedCommits } = useGitStore();
   const { setScrollToLine } = useUiStore();
   const comments = getAllComments();
   const [exportStatus, setExportStatus] = useState<
@@ -54,13 +54,8 @@ export function CommentList() {
   >("idle");
 
   const handleNavigate = (comment: Comment) => {
-    // Find the file in status and select it
-    const file = status?.files.find((f) => f.path === comment.filePath);
-    if (file) {
-      selectFile(file);
-      // Set the scroll target after selecting the file
-      setScrollToLine({ line: comment.startLine, isOld: comment.isOld });
-    }
+    selectFile(comment.filePath);
+    setScrollToLine({ line: comment.startLine, isOld: comment.isOld });
   };
 
   const handleCopyMarkdown = async () => {

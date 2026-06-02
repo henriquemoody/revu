@@ -7,7 +7,7 @@ import { FileItem } from "./FileItem";
 export function FileList() {
   const {
     status,
-    selectedFile,
+    selectedFilePath,
     selectFile,
     stageFile,
     unstageFile,
@@ -66,11 +66,8 @@ export function FileList() {
               <FileItem
                 key={`staged-${file.path}`}
                 file={file}
-                isSelected={
-                  selectedFile?.path === file.path &&
-                  selectedFile?.staged === file.staged
-                }
-                onSelect={() => selectFile(file)}
+                isSelected={selectedFilePath === file.path}
+                onSelect={() => selectFile(file.path)}
                 onStageToggle={() => handleStageToggle(file)}
                 commentCount={commentCountByFile[file.path] || 0}
               />
@@ -94,11 +91,8 @@ export function FileList() {
               <FileItem
                 key={`unstaged-${file.path}`}
                 file={file}
-                isSelected={
-                  selectedFile?.path === file.path &&
-                  selectedFile?.staged === file.staged
-                }
-                onSelect={() => selectFile(file)}
+                isSelected={selectedFilePath === file.path}
+                onSelect={() => selectFile(file.path)}
                 onStageToggle={() => handleStageToggle(file)}
                 commentCount={commentCountByFile[file.path] || 0}
               />

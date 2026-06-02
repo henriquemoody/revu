@@ -8,8 +8,8 @@ pub mod status;
 
 pub use commit::commit;
 pub use commits::{
-    get_branch_log, get_commit_file_diff, get_commit_files, get_commit_log,
-    get_multi_commit_file_diff, get_multi_commit_files,
+    get_branch_log, get_combined_commit_diff, get_commit_file_diff, get_commit_files,
+    get_commit_log, get_multi_commit_file_diff, get_multi_commit_files,
 };
 pub use diff::{get_combined_diff, get_file_content, get_file_diff};
 pub use discard::{discard_all, discard_file};
